@@ -40,11 +40,14 @@ pub struct Board {
     pub hash_key: u64,
     pub history: [u64; MAX_HISTORY],
     pub history_ply: usize,
+    pub material_score: i32, // Score for material balance
+    pub mg_pst_score: i32,   // Midgame score from piece-square tables
+    pub eg_pst_score: i32,   // Endgame score from piece-square tables
 }
 
 impl Board {
     pub fn new() -> Self {
-        Board {
+        Self {
             piece_bitboards: [0; 14],
             color_bitboards: [0; 2],
             board: [Piece::Empty; 90],
@@ -52,6 +55,9 @@ impl Board {
             hash_key: 0,
             history: [0; MAX_HISTORY],
             history_ply: 0,
+            material_score: 0,
+            mg_pst_score: 0,
+            eg_pst_score: 0,
         }
     }
 
@@ -86,6 +92,12 @@ impl Board {
             board.hash_key ^= zobrist::ZOBRIST_PLAYER;
         }
 
+        // Calculate and store the initial evaluation scores
+        let (material, mg_pst, eg_pst) = crate::evaluate::calculate_full_scores(&board);
+        board.material_score = material;
+        board.mg_pst_score = mg_pst;
+        board.eg_pst_score = eg_pst;
+
         board.history[board.history_ply] = board.hash_key;
         board
     }
@@ -106,106 +118,16 @@ impl Board {
         self.color_bitboards[0] | self.color_bitboards[1]
     }
 
-    pub fn generate_pseudo_legal_moves(&self) -> Vec<crate::r#move::Move> {
-        let mut moves = Vec::with_capacity(128);
-        let player_idx = self.player_to_move.get_bb_idx();
-        let own_pieces_bb = self.color_bitboards[player_idx];
-        let opponent_pieces_bb = self.color_bitboards[1 - player_idx];
-        let occupied = own_pieces_bb | opponent_pieces_bb;
-
-        let (piece_start_idx, piece_end_idx) = if self.player_to_move == Player::Red {
-            (0, 7)
-        } else {
-            (7, 14)
-        };
-
-        for i in piece_start_idx..piece_end_idx {
-            let mut piece_bb = self.piece_bitboards[i];
-            if piece_bb == 0 {
-                continue;
-            }
-            let piece_type = self.board[piece_bb.trailing_zeros() as usize];
-
-            while piece_bb != 0 {
-                let from_sq = piece_bb.trailing_zeros() as usize;
-                let mut moves_bb: Bitboard = 0;
-
-                match piece_type {
-                    Piece::RKing | Piece::BKing => {
-                        moves_bb = crate::move_gen::ATTACK_TABLES.king[from_sq]
-                    }
-                    Piece::RGuard | Piece::BGuard => {
-                        moves_bb = crate::move_gen::ATTACK_TABLES.guard[from_sq]
-                    }
-                    Piece::RBishop => {
-                        let mut potential_moves = crate::move_gen::ATTACK_TABLES.bishop[from_sq];
-                        potential_moves &= crate::move_gen::ATTACK_TABLES.red_half_mask;
-                        while potential_moves != 0 {
-                            let to_sq = potential_moves.trailing_zeros() as usize;
-                            let leg_sq = crate::move_gen::ATTACK_TABLES.bishop_legs[from_sq][to_sq];
-                            if (occupied & SQUARE_MASKS[leg_sq]) == 0 {
-                                moves_bb |= SQUARE_MASKS[to_sq];
-                            }
-                            potential_moves &= !SQUARE_MASKS[to_sq];
-                        }
-                    }
-                    Piece::BBishop => {
-                        let mut potential_moves = crate::move_gen::ATTACK_TABLES.bishop[from_sq];
-                        potential_moves &= crate::move_gen::ATTACK_TABLES.black_half_mask;
-                        while potential_moves != 0 {
-                            let to_sq = potential_moves.trailing_zeros() as usize;
-                            let leg_sq = crate::move_gen::ATTACK_TABLES.bishop_legs[from_sq][to_sq];
-                            if (occupied & SQUARE_MASKS[leg_sq]) == 0 {
-                                moves_bb |= SQUARE_MASKS[to_sq];
-                            }
-                            potential_moves &= !SQUARE_MASKS[to_sq];
-                        }
-                    }
-                    Piece::RHorse | Piece::BHorse => {
-                        let mut potential_moves = crate::move_gen::ATTACK_TABLES.horse[from_sq];
-                        while potential_moves != 0 {
-                            let to_sq = potential_moves.trailing_zeros() as usize;
-                            let leg_sq = crate::move_gen::ATTACK_TABLES.horse_legs[from_sq][to_sq];
-                            if (occupied & SQUARE_MASKS[leg_sq]) == 0 {
-                                moves_bb |= SQUARE_MASKS[to_sq];
-                            }
-                            potential_moves &= !SQUARE_MASKS[to_sq];
-                        }
-                    }
-                    Piece::RPawn | Piece::BPawn => {
-                        moves_bb = crate::move_gen::ATTACK_TABLES.pawn[player_idx][from_sq]
-                    }
-                    Piece::RRook | Piece::BRook => {
-                        moves_bb = crate::move_gen::get_rook_moves_bb(from_sq, occupied)
-                    }
-                    Piece::RCannon | Piece::BCannon => {
-                        moves_bb = crate::move_gen::get_cannon_moves_bb(from_sq, occupied)
-                    }
-                    _ => {}
-                }
-
-                let mut valid_moves_bb = moves_bb & !own_pieces_bb;
-                while valid_moves_bb != 0 {
-                    let to_sq = valid_moves_bb.trailing_zeros() as usize;
-                    let captured_piece = if (opponent_pieces_bb & SQUARE_MASKS[to_sq]) != 0 {
-                        Some(self.board[to_sq])
-                    } else {
-                        None
-                    };
-                    moves.push(crate::r#move::Move::new(from_sq, to_sq, captured_piece));
-                    valid_moves_bb &= !SQUARE_MASKS[to_sq];
-                }
-                piece_bb &= !SQUARE_MASKS[from_sq];
-            }
-        }
-        moves
-    }
-
     pub fn move_piece(&mut self, mv: crate::r#move::Move) -> Piece {
         let from_sq = mv.from_sq();
         let to_sq = mv.to_sq();
         let moving_piece = self.board[from_sq];
         let captured_piece = self.board[to_sq];
+
+        // --- Incremental Score Update (Remove moving piece from from_sq) ---
+        let (mg_from, eg_from) = crate::evaluate::get_pst_scores(moving_piece, from_sq);
+        self.mg_pst_score -= mg_from;
+        self.eg_pst_score -= eg_from;
 
         let r_from = from_sq / 9;
         let c_from = from_sq % 9;
@@ -224,12 +146,28 @@ impl Board {
         self.color_bitboards[self.player_to_move.get_bb_idx()] ^= move_mask;
 
         if captured_piece != Piece::Empty {
+            // --- Incremental Score Update (Capture) ---
+            let captured_value = crate::evaluate::MATERIAL_VALUES[captured_piece.abs_val() as usize];
+            if captured_piece.player().unwrap() == Player::Black {
+                self.material_score += captured_value;
+            } else {
+                self.material_score -= captured_value;
+            }
+            let (mg_cap, eg_cap) = crate::evaluate::get_pst_scores(captured_piece, to_sq);
+            self.mg_pst_score -= mg_cap;
+            self.eg_pst_score -= eg_cap;
+
             let captured_z_idx = captured_piece.get_zobrist_idx().unwrap();
             self.hash_key ^= zobrist::ZOBRIST_KEYS[captured_z_idx][r_to][c_to];
             let captured_player = captured_piece.player().unwrap();
             self.piece_bitboards[captured_piece.get_bb_index().unwrap()] &= !SQUARE_MASKS[to_sq];
             self.color_bitboards[captured_player.get_bb_idx()] &= !SQUARE_MASKS[to_sq];
         }
+
+        // --- Incremental Score Update (Add moving piece to to_sq) ---
+        let (mg_to, eg_to) = crate::evaluate::get_pst_scores(moving_piece, to_sq);
+        self.mg_pst_score += mg_to;
+        self.eg_pst_score += eg_to;
 
         self.player_to_move = self.player_to_move.opponent();
         self.hash_key ^= zobrist::ZOBRIST_PLAYER;
@@ -254,6 +192,11 @@ impl Board {
         self.player_to_move = self.player_to_move.opponent();
         self.hash_key ^= zobrist::ZOBRIST_PLAYER;
 
+        // --- Incremental Score Update (Remove moving piece from to_sq) ---
+        let (mg_to, eg_to) = crate::evaluate::get_pst_scores(moving_piece, to_sq);
+        self.mg_pst_score -= mg_to;
+        self.eg_pst_score -= eg_to;
+
         self.board[from_sq] = moving_piece;
         self.board[to_sq] = captured_piece;
 
@@ -264,28 +207,29 @@ impl Board {
         self.hash_key ^= zobrist::ZOBRIST_KEYS[moving_z_idx][r_from][c_from];
         self.hash_key ^= zobrist::ZOBRIST_KEYS[moving_z_idx][r_to][c_to];
 
+        // --- Incremental Score Update (Add moving piece to from_sq) ---
+        let (mg_from, eg_from) = crate::evaluate::get_pst_scores(moving_piece, from_sq);
+        self.mg_pst_score += mg_from;
+        self.eg_pst_score += eg_from;
+
         if captured_piece != Piece::Empty {
+            // --- Incremental Score Update (Restore captured piece) ---
+            let captured_value = crate::evaluate::MATERIAL_VALUES[captured_piece.abs_val() as usize];
+            if captured_piece.player().unwrap() == Player::Black {
+                self.material_score -= captured_value;
+            } else {
+                self.material_score += captured_value;
+            }
+            let (mg_cap, eg_cap) = crate::evaluate::get_pst_scores(captured_piece, to_sq);
+            self.mg_pst_score += mg_cap;
+            self.eg_pst_score += eg_cap;
+
             let captured_player = captured_piece.player().unwrap();
             self.piece_bitboards[captured_piece.get_bb_index().unwrap()] |= SQUARE_MASKS[to_sq];
             self.color_bitboards[captured_player.get_bb_idx()] |= SQUARE_MASKS[to_sq];
             let captured_z_idx = captured_piece.get_zobrist_idx().unwrap();
             self.hash_key ^= zobrist::ZOBRIST_KEYS[captured_z_idx][r_to][c_to];
         }
-    }
-
-    pub fn generate_legal_moves(&mut self) -> Vec<crate::r#move::Move> {
-        let pseudo_legal_moves = self.generate_pseudo_legal_moves();
-        let mut legal_moves = Vec::new();
-        let player = self.player_to_move;
-
-        for &mv in &pseudo_legal_moves {
-            let captured = self.move_piece(mv);
-            if !crate::move_gen::is_king_in_check(self, player) {
-                legal_moves.push(mv);
-            }
-            self.unmove_piece(mv, captured);
-        }
-        legal_moves
     }
 
     /// Generates all pseudo-legal capture moves for the current player.
@@ -379,6 +323,117 @@ impl Board {
             }
         }
         moves
+    }
+
+    /// Generates all pseudo-legal quiet (non-capture) moves for the current player.
+    pub fn generate_quiet_moves(&self) -> Vec<crate::r#move::Move> {
+        let mut moves = Vec::with_capacity(64);
+        let player_idx = self.player_to_move.get_bb_idx();
+        let own_pieces_bb = self.color_bitboards[player_idx];
+        let opponent_pieces_bb = self.color_bitboards[1 - player_idx];
+        let occupied = own_pieces_bb | opponent_pieces_bb;
+        let empty_squares = !occupied;
+
+        let (piece_start_idx, piece_end_idx) = if self.player_to_move == Player::Red {
+            (0, 7)
+        } else {
+            (7, 14)
+        };
+
+        for i in piece_start_idx..piece_end_idx {
+            let mut piece_bb = self.piece_bitboards[i];
+            if piece_bb == 0 {
+                continue;
+            }
+            let piece_type = self.board[piece_bb.trailing_zeros() as usize];
+
+            while piece_bb != 0 {
+                let from_sq = piece_bb.trailing_zeros() as usize;
+                let mut moves_bb: Bitboard = 0;
+
+                match piece_type {
+                    Piece::RKing | Piece::BKing => {
+                        moves_bb = crate::move_gen::ATTACK_TABLES.king[from_sq]
+                    }
+                    Piece::RGuard | Piece::BGuard => {
+                        moves_bb = crate::move_gen::ATTACK_TABLES.guard[from_sq]
+                    }
+                    Piece::RBishop => {
+                        let mut potential_moves = crate::move_gen::ATTACK_TABLES.bishop[from_sq];
+                        potential_moves &= crate::move_gen::ATTACK_TABLES.red_half_mask;
+                        while potential_moves != 0 {
+                            let to_sq = potential_moves.trailing_zeros() as usize;
+                            let leg_sq = crate::move_gen::ATTACK_TABLES.bishop_legs[from_sq][to_sq];
+                            if (occupied & SQUARE_MASKS[leg_sq]) == 0 { moves_bb |= SQUARE_MASKS[to_sq]; }
+                            potential_moves &= !SQUARE_MASKS[to_sq];
+                        }
+                    }
+                    Piece::BBishop => {
+                        let mut potential_moves = crate::move_gen::ATTACK_TABLES.bishop[from_sq];
+                        potential_moves &= crate::move_gen::ATTACK_TABLES.black_half_mask;
+                        while potential_moves != 0 {
+                            let to_sq = potential_moves.trailing_zeros() as usize;
+                            let leg_sq = crate::move_gen::ATTACK_TABLES.bishop_legs[from_sq][to_sq];
+                            if (occupied & SQUARE_MASKS[leg_sq]) == 0 { moves_bb |= SQUARE_MASKS[to_sq]; }
+                            potential_moves &= !SQUARE_MASKS[to_sq];
+                        }
+                    }
+                    Piece::RHorse | Piece::BHorse => {
+                        let mut potential_moves = crate::move_gen::ATTACK_TABLES.horse[from_sq];
+                        while potential_moves != 0 {
+                            let to_sq = potential_moves.trailing_zeros() as usize;
+                            let leg_sq = crate::move_gen::ATTACK_TABLES.horse_legs[from_sq][to_sq];
+                            if (occupied & SQUARE_MASKS[leg_sq]) == 0 {
+                                moves_bb |= SQUARE_MASKS[to_sq];
+                            }
+                            potential_moves &= !SQUARE_MASKS[to_sq];
+                        }
+                    }
+                    Piece::RPawn | Piece::BPawn => {
+                        moves_bb = crate::move_gen::ATTACK_TABLES.pawn[player_idx][from_sq]
+                    }
+                    Piece::RRook | Piece::BRook => {
+                        moves_bb = crate::move_gen::get_rook_moves_bb(from_sq, occupied)
+                    }
+                    Piece::RCannon | Piece::BCannon => {
+                        moves_bb = crate::move_gen::get_cannon_moves_bb(from_sq, occupied)
+                    }
+                    _ => {}
+                }
+
+                let mut quiet_moves_bb = moves_bb & empty_squares;
+
+                while quiet_moves_bb != 0 {
+                    let to_sq = quiet_moves_bb.trailing_zeros() as usize;
+                    moves.push(crate::r#move::Move::new(
+                        from_sq,
+                        to_sq,
+                        None,
+                    ));
+                    quiet_moves_bb &= !SQUARE_MASKS[to_sq];
+                }
+
+                piece_bb &= !SQUARE_MASKS[from_sq];
+            }
+        }
+        moves
+    }
+
+    pub fn generate_legal_moves(&mut self) -> Vec<crate::r#move::Move> {
+        let mut legal_moves = Vec::with_capacity(128);
+        let player = self.player_to_move;
+
+        let mut pseudo_legal_moves = self.generate_capture_moves();
+        pseudo_legal_moves.extend(self.generate_quiet_moves());
+
+        for &mv in &pseudo_legal_moves {
+            let captured = self.move_piece(mv);
+            if !crate::move_gen::is_king_in_check(self, player) {
+                legal_moves.push(mv);
+            }
+            self.unmove_piece(mv, captured);
+        }
+        legal_moves
     }
 }
 

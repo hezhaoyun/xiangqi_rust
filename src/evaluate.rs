@@ -6,7 +6,7 @@ use crate::bitboard::{self, Board};
 use crate::constants::{Piece, Player};
 
 // --- Piece Values ---
-const MATERIAL_VALUES: [i32; 8] = [0, 10000, 200, 200, 450, 900, 500, 100]; // Indexed by Piece type (abs value)
+pub const MATERIAL_VALUES: [i32; 8] = [0, 10000, 200, 200, 450, 900, 500, 100]; // Indexed by Piece type (abs value)
 
 // --- Piece-Square Tables (Midgame) ---
 // From Red's perspective (bottom of the board)
@@ -115,7 +115,7 @@ const PAWN_PST_EG: [[i32; 9]; 10] = [
     [0, 0, 0, 0, 0, 0, 0, 0, 0],
 ];
 
-fn get_pst_mg(p: Piece) -> &'static [[i32; 9]; 10] {
+pub fn get_pst_mg(p: Piece) -> &'static [[i32; 9]; 10] {
     match p.abs_val() as i8 {
         1 => &KING_PST_MG,
         2 => &GUARD_PST_MG,
@@ -128,13 +128,37 @@ fn get_pst_mg(p: Piece) -> &'static [[i32; 9]; 10] {
     }
 }
 
-fn get_pst_eg(p: Piece) -> &'static [[i32; 9]; 10] {
+pub fn get_pst_eg(p: Piece) -> &'static [[i32; 9]; 10] {
     if p.abs_val() == 7 { &PAWN_PST_EG } else { get_pst_mg(p) }
 }
 
-pub fn evaluate(board: &Board) -> i32 {
+/// Returns the midgame and endgame PST scores for a given piece at a given square.
+pub fn get_pst_scores(piece: Piece, sq: usize) -> (i32, i32) {
+    let player = piece.player().unwrap();
+    let r = sq / 9;
+    let c = sq % 9;
+
+    let (pst_r, pst_c) = if player == Player::Red { (9 - r, 8 - c) } else { (r, c) };
+
+    let mg_table = get_pst_mg(piece);
+    let eg_table = get_pst_eg(piece);
+
+    let mg_pst = mg_table[pst_r][pst_c];
+    let eg_pst = eg_table[pst_r][pst_c];
+
+    if player == Player::Red {
+        (mg_pst, eg_pst)
+    } else {
+        (-mg_pst, -eg_pst)
+    }
+}
+
+/// Calculates the full material and PST scores from scratch.
+/// This is intended to be called only once when the board is set up.
+pub fn calculate_full_scores(board: &Board) -> (i32, i32, i32) {
     let mut material_score = 0;
-    let mut pst_score = 0;
+    let mut mg_pst_score = 0;
+    let mut eg_pst_score = 0;
 
     // 1. Material Score
     for i in 1..=7 {
@@ -145,18 +169,7 @@ pub fn evaluate(board: &Board) -> i32 {
         material_score -= bitboard::popcount(board.piece_bitboards[black_piece.get_bb_index().unwrap()]) as i32 * MATERIAL_VALUES[i as usize];
     }
 
-    // 2. Tapered Eval Phase Weight
-    const OPENING_PHASE_MATERIAL: i32 = (900 + 450 + 500) * 2 + (200 + 200) * 2;
-    let mut current_phase_material = 0;
-    for i in 2..=6 { // Major pieces
-        let red_piece = Piece::from_abs(i);
-        let black_piece = Piece::from_abs(-(i as i8));
-        current_phase_material += bitboard::popcount(board.piece_bitboards[red_piece.get_bb_index().unwrap()]) as i32 * MATERIAL_VALUES[i as usize];
-        current_phase_material += bitboard::popcount(board.piece_bitboards[black_piece.get_bb_index().unwrap()]) as i32 * MATERIAL_VALUES[i as usize];
-    }
-    let phase_weight = (current_phase_material as f64 / OPENING_PHASE_MATERIAL as f64).min(1.0);
-
-    // 3. PST Score
+    // 2. PST Scores (Midgame and Endgame)
     for i in 0..14 {
         let mut piece_bb = board.piece_bitboards[i];
         if piece_bb == 0 { continue; }
@@ -175,19 +188,36 @@ pub fn evaluate(board: &Board) -> i32 {
             let mg_pst = mg_table[pst_r][pst_c];
             let eg_pst = eg_table[pst_r][pst_c];
 
-            let pst = (mg_pst as f64 * phase_weight + eg_pst as f64 * (1.0 - phase_weight)) as i32;
-
             if player == Player::Red {
-                pst_score += pst;
+                mg_pst_score += mg_pst;
+                eg_pst_score += eg_pst;
             } else {
-                pst_score -= pst;
+                mg_pst_score -= mg_pst;
+                eg_pst_score -= eg_pst;
             }
             piece_bb &= !crate::bitboard::SQUARE_MASKS[sq];
         }
     }
 
-    // TODO: Port mobility, patterns, king safety, etc.
+    (material_score, mg_pst_score, eg_pst_score)
+}
 
+pub fn evaluate(board: &Board) -> i32 {
+    // --- Tapered Evaluation ---
+    const OPENING_PHASE_MATERIAL: i32 = (900 + 450 + 500) * 2 + (200 + 200) * 2;
+    let mut current_phase_material = 0;
+    for i in 2..=6 { // Major pieces
+        let red_piece = Piece::from_abs(i);
+        let black_piece = Piece::from_abs(-(i as i8));
+        current_phase_material += bitboard::popcount(board.piece_bitboards[red_piece.get_bb_index().unwrap()]) as i32 * MATERIAL_VALUES[i as usize];
+        current_phase_material += bitboard::popcount(board.piece_bitboards[black_piece.get_bb_index().unwrap()]) as i32 * MATERIAL_VALUES[i as usize];
+    }
+    let phase_weight = (current_phase_material as f64 / OPENING_PHASE_MATERIAL as f64).min(1.0);
+
+    let pst_score = (board.mg_pst_score as f64 * phase_weight + board.eg_pst_score as f64 * (1.0 - phase_weight)) as i32;
+    let material_score = board.material_score;
+
+    // The less expensive, dynamic scores are still calculated on the fly.
     let mobility_score = calculate_mobility_score(board);
     let pattern_score = calculate_pattern_score(board);
     let king_safety_score = calculate_king_safety_score(board);
@@ -363,4 +393,3 @@ fn calculate_mobility_score(board: &Board) -> i32 {
     }
     mobility_score
 }
-
