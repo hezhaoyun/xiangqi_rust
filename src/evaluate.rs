@@ -138,7 +138,9 @@ pub fn get_pst_scores(piece: Piece, sq: usize) -> (i32, i32) {
     let r = sq / 9;
     let c = sq % 9;
 
-    let (pst_r, pst_c) = if player == Player::Red { (9 - r, 8 - c) } else { (r, c) };
+    // Map board coordinates to PST coordinates (from Red's perspective)
+    let pst_r = 9 - r;
+    let pst_c = 8 - c;
 
     let mg_table = get_pst_mg(piece);
     let eg_table = get_pst_eg(piece);
@@ -146,6 +148,7 @@ pub fn get_pst_scores(piece: Piece, sq: usize) -> (i32, i32) {
     let mg_pst = mg_table[pst_r][pst_c];
     let eg_pst = eg_table[pst_r][pst_c];
 
+    // Return score from Red's perspective
     if player == Player::Red {
         (mg_pst, eg_pst)
     } else {

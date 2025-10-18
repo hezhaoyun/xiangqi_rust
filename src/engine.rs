@@ -106,14 +106,24 @@ impl Engine {
                 best_score_overall = best_score_this_depth;
             }
 
+            // The score from negamax is from the perspective of the player whose turn it is.
+            // To display it consistently from Red's perspective (assuming Red is the human player),
+            // we check whose turn it was at the root of the search.
+            let display_score = if board.player_to_move == Player::Red {
+                best_score_overall
+            } else {
+                // If it was Black's turn, a positive score means Black is winning.
+                // To show this from Red's perspective, we negate it.
+                -best_score_overall
+            };
+
             println!(
                 "  Depth {}: Best score = {}, Best move = {} -> {}",
                 current_depth,
-                best_score_overall,
+                display_score,
                 best_move_overall.from_sq(),
                 best_move_overall.to_sq()
             );
-
             if best_score_overall.abs() > MATE_VALUE - 100 {
                 break;
             }
