@@ -20,9 +20,8 @@ pub fn run() {
     let mut move_history: Vec<(Move, Piece)> = Vec::new();
 
     println!("--- Xiangqi Engine in Rust ---");
-    println!(
-        "Enter moves in algebraic notation (e.g., h2e2). Type 'undo' to undo, 'exit' to quit."
-    );
+    println!("Enter moves in algebraic notation (e.g., h2e2).");
+    println!("Type 'undo' to undo, 'loadfen <FEN>' to load a position, or 'exit' to quit.");
 
     loop {
         println!();

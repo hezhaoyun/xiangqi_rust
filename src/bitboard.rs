@@ -102,6 +102,40 @@ impl Board {
         board
     }
 
+    pub fn to_fen(&self) -> String {
+        let mut fen = String::with_capacity(128);
+        for r in 0..10 {
+            let mut empty_count = 0;
+            for c in 0..9 {
+                let piece = self.board[r * 9 + c];
+                if piece == Piece::Empty {
+                    empty_count += 1;
+                } else {
+                    if empty_count > 0 {
+                        fen.push_str(&empty_count.to_string());
+                        empty_count = 0;
+                    }
+                    fen.push(piece.to_fen_char());
+                }
+            }
+            if empty_count > 0 {
+                fen.push_str(&empty_count.to_string());
+            }
+            if r < 9 {
+                fen.push('/');
+            }
+        }
+
+        // Active color
+        fen.push(' ');
+        fen.push(if self.player_to_move == Player::Red { 'w' } else { 'b' });
+
+        // Other fields (can be placeholders as they are not used by this engine)
+        fen.push_str(" - - 0 1");
+
+        fen
+    }
+
     fn set_piece(&mut self, sq: usize, piece: Piece) {
         let mask = SQUARE_MASKS[sq];
         let player = piece.player().unwrap();

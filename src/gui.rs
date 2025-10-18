@@ -1,9 +1,8 @@
 //! The GUI for the Xiangqi engine, built with Iced.
 
-use iced::widget::{canvas, text, Button, Column, Container, Row};
+use iced::widget::{canvas, text, Button, Column, Container, Row, TextInput};
 use iced::{
-    executor, Application, Command, Element, Length, Point, Pixels, Rectangle, Settings,
-    Size, Subscription, Theme, Renderer, Font,
+    executor, Application, Command, Element, Font, Length, Padding, Pixels, Point, Rectangle, Renderer, Settings, Size, Subscription, Theme
 };
 use iced::widget::canvas::{Program, Geometry, Frame, Stroke, Event as CanvasEvent};
 use iced::mouse::{Cursor, Event as MouseEvent};
@@ -18,7 +17,7 @@ use crate::r#move::Move;
 
 const CHINESE_FONT: Font = Font::with_name("PingFang SC");
 
-const BOARD_SIZE: f32 = 600.0;
+const BOARD_SIZE: f32 = 500.0;
 const SQUARE_SIZE: f32 = BOARD_SIZE / 9.0;
 const BOARD_HEIGHT: f32 = SQUARE_SIZE * 10.0;
 
@@ -32,12 +31,14 @@ pub fn run() -> iced::Result {
     })
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 enum Message {
     NewGame,
     UndoMove,
     SquareClicked(usize),
     EngineMoved(Move),
+    FenInputChanged(String),
+    LoadFen,
 }
 
 struct XiangqiApp {
@@ -46,6 +47,7 @@ struct XiangqiApp {
     selected_square: Option<usize>,
     last_move: Option<Move>,
     move_history: Vec<(Move, Piece)>,
+    fen_input: String,
     game_state: GameState,
     board_cache: canvas::Cache,
 }
@@ -83,14 +85,14 @@ impl Application for XiangqiApp {
     type Flags = ();
 
     fn new(_flags: ()) -> (Self, Command<Message>) {
+        let initial_fen = "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1";
         let app = XiangqiApp {
-            board: Arc::new(Mutex::new(Board::from_fen(
-                "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1",
-            ))),
+            board: Arc::new(Mutex::new(Board::from_fen(initial_fen))),
             engine: Arc::new(TokioMutex::new(Engine::new(16))),
             selected_square: None,
             last_move: None,
             move_history: Vec::new(),
+            fen_input: initial_fen.to_string(),
             game_state: GameState::PlayerTurn,
             board_cache: canvas::Cache::new(),
         };
@@ -113,6 +115,7 @@ impl Application for XiangqiApp {
 
                         if let Some(&mv) = mv {
                             let captured = board.move_piece(mv);
+                            self.fen_input = board.to_fen();
                             self.move_history.push((mv, captured));
                             self.selected_square = None;
                             self.last_move = Some(mv);
@@ -151,12 +154,12 @@ impl Application for XiangqiApp {
                     Command::none()
                 }
                 Message::NewGame => {
-                    self.board = Arc::new(Mutex::new(Board::from_fen(
-                        "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1",
-                    )));
+                    let initial_fen = "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1";
+                    self.board = Arc::new(Mutex::new(Board::from_fen(initial_fen)));
                     self.selected_square = None;
                     self.last_move = None;
                     self.move_history.clear();
+                    self.fen_input = initial_fen.to_string();
                     self.game_state = GameState::PlayerTurn;
                     self.board_cache.clear();
                     Command::none()
@@ -175,11 +178,31 @@ impl Application for XiangqiApp {
                             board.unmove_piece(mv, captured);
                         }
 
+                        self.fen_input = board.to_fen();
                         self.game_state = GameState::PlayerTurn;
                         self.last_move = self.move_history.last().map(|(mv, _)| *mv);
                         self.selected_square = None;
                         self.board_cache.clear();
                     }
+                    Command::none()
+                }
+                Message::FenInputChanged(new_fen) => {
+                    self.fen_input = new_fen;
+                    Command::none()
+                }
+                Message::LoadFen => {
+                    let new_board = std::panic::catch_unwind(|| {
+                        Board::from_fen(&self.fen_input)
+                    }).ok();
+
+                    if let Some(board) = new_board {
+                        self.board = Arc::new(Mutex::new(board));
+                        self.selected_square = None;
+                        self.last_move = None;
+                        self.move_history.clear();
+                        self.game_state = GameState::PlayerTurn;
+                        self.board_cache.clear();
+                    } 
                     Command::none()
                 }
                 _ => Command::none(),
@@ -189,6 +212,7 @@ impl Application for XiangqiApp {
                     let board_lock = self.board.clone();
                     let mut board = board_lock.lock().unwrap();
                     let captured = board.move_piece(mv);
+                    self.fen_input = board.to_fen();
                     self.move_history.push((mv, captured));
                     self.last_move = Some(mv);
                     self.board_cache.clear();
@@ -210,12 +234,12 @@ impl Application for XiangqiApp {
             },
             GameState::GameOver(_) => match message {
                 Message::NewGame => {
-                    self.board = Arc::new(Mutex::new(Board::from_fen(
-                        "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1",
-                    )));
+                    let initial_fen = "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1";
+                    self.board = Arc::new(Mutex::new(Board::from_fen(initial_fen)));
                     self.selected_square = None;
                     self.last_move = None;
                     self.move_history.clear();
+                    self.fen_input = initial_fen.to_string();
                     self.game_state = GameState::PlayerTurn;
                     self.board_cache.clear();
                     Command::none()
@@ -245,12 +269,20 @@ impl Application for XiangqiApp {
             .push(Button::new(text("New Game")).on_press(Message::NewGame))
             .push(Button::new(text("Undo Move")).on_press(Message::UndoMove));
 
+        let fen_controls = Row::new()
+            .spacing(10)
+            .padding(Padding {top: 0.0, right: 100.0, bottom: 0.0, left: 100.0})
+            .align_items(iced::Alignment::Center)
+            .push(TextInput::new("FEN string...", &self.fen_input).on_input(Message::FenInputChanged).width(Length::Fill))
+            .push(Button::new(text("Load FEN")).on_press(Message::LoadFen));
+
         let content = Column::new()
             .spacing(20)
             .align_items(iced::Alignment::Center)
             .push(text(status_text).size(Pixels(24.0)))
             .push(canvas)
-            .push(controls);
+            .push(controls)
+            .push(fen_controls);
 
         Container::new(content)
             .width(Length::Fill)
