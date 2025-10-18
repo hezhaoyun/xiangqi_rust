@@ -32,9 +32,10 @@ pub fn run() -> iced::Result {
     })
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 enum Message {
     NewGame,
+    UndoMove,
     SquareClicked(usize),
     EngineMoved(Move),
 }
@@ -44,6 +45,7 @@ struct XiangqiApp {
     engine: Arc<TokioMutex<Engine>>,
     selected_square: Option<usize>,
     last_move: Option<Move>,
+    move_history: Vec<(Move, Piece)>,
     game_state: GameState,
     board_cache: canvas::Cache,
 }
@@ -88,6 +90,7 @@ impl Application for XiangqiApp {
             engine: Arc::new(TokioMutex::new(Engine::new(16))),
             selected_square: None,
             last_move: None,
+            move_history: Vec::new(),
             game_state: GameState::PlayerTurn,
             board_cache: canvas::Cache::new(),
         };
@@ -109,7 +112,8 @@ impl Application for XiangqiApp {
                         let mv = legal_moves.iter().find(|m| m.from_sq() == from_sq && m.to_sq() == sq);
 
                         if let Some(&mv) = mv {
-                            board.move_piece(mv);
+                            let captured = board.move_piece(mv);
+                            self.move_history.push((mv, captured));
                             self.selected_square = None;
                             self.last_move = Some(mv);
                             self.board_cache.clear();
@@ -152,8 +156,30 @@ impl Application for XiangqiApp {
                     )));
                     self.selected_square = None;
                     self.last_move = None;
+                    self.move_history.clear();
                     self.game_state = GameState::PlayerTurn;
                     self.board_cache.clear();
+                    Command::none()
+                }
+                Message::UndoMove => {
+                    if self.move_history.len() >= 2 {
+                        let board_lock = self.board.clone();
+                        let mut board = board_lock.lock().unwrap();
+
+                        // Undo engine move
+                        if let Some((mv, captured)) = self.move_history.pop() {
+                            board.unmove_piece(mv, captured);
+                        }
+                        // Undo player move
+                        if let Some((mv, captured)) = self.move_history.pop() {
+                            board.unmove_piece(mv, captured);
+                        }
+
+                        self.game_state = GameState::PlayerTurn;
+                        self.last_move = self.move_history.last().map(|(mv, _)| *mv);
+                        self.selected_square = None;
+                        self.board_cache.clear();
+                    }
                     Command::none()
                 }
                 _ => Command::none(),
@@ -162,7 +188,8 @@ impl Application for XiangqiApp {
                 Message::EngineMoved(mv) => {
                     let board_lock = self.board.clone();
                     let mut board = board_lock.lock().unwrap();
-                    board.move_piece(mv);
+                    let captured = board.move_piece(mv);
+                    self.move_history.push((mv, captured));
                     self.last_move = Some(mv);
                     self.board_cache.clear();
 
@@ -188,6 +215,7 @@ impl Application for XiangqiApp {
                     )));
                     self.selected_square = None;
                     self.last_move = None;
+                    self.move_history.clear();
                     self.game_state = GameState::PlayerTurn;
                     self.board_cache.clear();
                     Command::none()
@@ -212,16 +240,17 @@ impl Application for XiangqiApp {
             .width(Length::Fixed(BOARD_SIZE))
             .height(Length::Fixed(BOARD_HEIGHT));
 
+        let controls = Row::new()
+            .spacing(10)
+            .push(Button::new(text("New Game")).on_press(Message::NewGame))
+            .push(Button::new(text("Undo Move")).on_press(Message::UndoMove));
+
         let content = Column::new()
             .spacing(20)
             .align_items(iced::Alignment::Center)
             .push(text(status_text).size(Pixels(24.0)))
             .push(canvas)
-            .push(
-                Row::new()
-                    .spacing(10)
-                    .push(Button::new(text("New Game")).on_press(Message::NewGame)),
-            );
+            .push(controls);
 
         Container::new(content)
             .width(Length::Fill)

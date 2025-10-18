@@ -1,31 +1,35 @@
-
 //! The Textual User Interface for the Xiangqi engine.
 
 use crate::bitboard::Board;
-use crate::constants::Player;
+use crate::constants::{Piece, Player};
 use crate::engine::Engine;
 use crate::r#move::Move;
 use crossterm::{
     execute,
     style::{Color, Print, ResetColor, SetBackgroundColor, SetForegroundColor},
 };
-use std::io::{self, stdout, Write};
+use std::io::{self, stdout};
 
 /// Runs the main game loop for the text-based UI.
+
 pub fn run() {
     let fen = "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1";
     let mut board = Board::from_fen(fen);
     let mut engine = Engine::new(16); // 16MB TT
     let mut last_move: Option<Move> = None;
+    let mut move_history: Vec<(Move, Piece)> = Vec::new();
 
     println!("--- Xiangqi Engine in Rust ---");
-    println!("Enter moves in algebraic notation (e.g., h2e2). Type 'exit' to quit.");
+    println!(
+        "Enter moves in algebraic notation (e.g., h2e2). Type 'undo' to undo, 'exit' to quit."
+    );
 
     loop {
         println!();
         draw_board(&board, last_move.as_ref());
 
         let legal_moves = board.generate_legal_moves();
+
         if legal_moves.is_empty() {
             if crate::move_gen::is_king_in_check(&board, board.player_to_move) {
                 println!("Checkmate! {:?} wins.", board.player_to_move.opponent());
@@ -48,9 +52,34 @@ pub fn run() {
                 break;
             }
 
+            if input == "undo" {
+                if move_history.len() >= 2 {
+                    // Undo engine move
+
+                    if let Some((mv, captured)) = move_history.pop() {
+                        board.unmove_piece(mv, captured);
+                    }
+
+                    // Undo player move
+
+                    if let Some((mv, captured)) = move_history.pop() {
+                        board.unmove_piece(mv, captured);
+                    }
+
+                    last_move = move_history.last().map(|(m, _)| *m);
+
+                    println!("Undid last full move.");
+                } else {
+                    println!("Not enough moves in history to undo.");
+                }
+
+                continue;
+            }
+
             match parse_move_string(input, &legal_moves) {
                 Some(mv) => {
-                    board.move_piece(mv);
+                    let captured = board.move_piece(mv);
+                    move_history.push((mv, captured));
                     last_move = Some(mv);
                 }
                 None => {
@@ -71,11 +100,14 @@ pub fn run() {
 
             let from_notation = get_square_notation(best_move.from_sq());
             let to_notation = get_square_notation(best_move.to_sq());
+
             println!(
                 "Computer moves: {}{} (Score: {})",
                 from_notation, to_notation, score
             );
-            board.move_piece(best_move);
+
+            let captured = board.move_piece(best_move);
+            move_history.push((best_move, captured));
             last_move = Some(best_move);
         }
     }
@@ -97,7 +129,6 @@ fn draw_board(board: &Board, last_move: Option<&Move>) {
         for c in 0..9 {
             let sq = r * 9 + c;
             let piece = board.board[sq];
-
             let is_from = from_sq.map_or(false, |s| s == sq);
             let is_to = to_sq.map_or(false, |s| s == sq);
 
@@ -138,6 +169,7 @@ fn parse_move_string(move_str: &str, legal_moves: &[Move]) -> Option<Move> {
     if move_str.len() != 4 {
         return None;
     }
+
     let mut chars = move_str.chars();
     let from_c = (chars.next()? as u8) - b'a';
     let from_r = 9 - ((chars.next()? as u8) - b'0');
@@ -166,6 +198,7 @@ fn get_square_notation(sq: usize) -> String {
     if sq >= 90 {
         return "??".to_string();
     }
+
     let r = sq / 9;
     let c = sq % 9;
     format!("{}{}", (b'a' + c as u8) as char, 9 - r)
