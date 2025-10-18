@@ -5,7 +5,7 @@ use iced::{
     executor, Application, Command, Element, Length, Point, Pixels, Rectangle, Settings,
     Size, Subscription, Theme, Renderer, Font,
 };
-use iced::widget::canvas::{Program, Geometry, Frame, Stroke, Event as CanvasEvent, Fill};
+use iced::widget::canvas::{Program, Geometry, Frame, Stroke, Event as CanvasEvent};
 use iced::mouse::{Cursor, Event as MouseEvent};
 use iced::widget::canvas::event::Status;
 use std::sync::{Arc, Mutex};
