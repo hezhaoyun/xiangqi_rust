@@ -2,10 +2,10 @@
 
 use iced::widget::{canvas, text, Button, Column, Container, Row};
 use iced::{
-    executor, Application, Command, Element, Length, Point, Pixels, Rectangle, Settings, Size,
-    Subscription, Theme, Renderer,
+    executor, Application, Command, Element, Length, Point, Pixels, Rectangle, Settings,
+    Size, Subscription, Theme, Renderer, Font,
 };
-use iced::widget::canvas::{Program, Geometry, Frame, Stroke, Event as CanvasEvent};
+use iced::widget::canvas::{Program, Geometry, Frame, Stroke, Event as CanvasEvent, Fill};
 use iced::mouse::{Cursor, Event as MouseEvent};
 use iced::widget::canvas::event::Status;
 use std::sync::{Arc, Mutex};
@@ -16,6 +16,8 @@ use crate::constants::{Piece, Player};
 use crate::engine::Engine;
 use crate::r#move::Move;
 
+const CHINESE_FONT: Font = Font::with_name("PingFang SC");
+
 const BOARD_SIZE: f32 = 600.0;
 const SQUARE_SIZE: f32 = BOARD_SIZE / 9.0;
 const BOARD_HEIGHT: f32 = SQUARE_SIZE * 10.0;
@@ -23,7 +25,7 @@ const BOARD_HEIGHT: f32 = SQUARE_SIZE * 10.0;
 pub fn run() -> iced::Result {
     XiangqiApp::run(Settings {
         window: iced::window::Settings {
-            size: Size::new(700.0, 700.0),
+            size: Size::new(700.0, 800.0),
             ..iced::window::Settings::default()
         },
         ..Settings::default()
@@ -49,6 +51,26 @@ enum GameState {
     PlayerTurn,
     EngineThinking,
     GameOver(String),
+}
+
+fn get_chinese_piece_char(piece: Piece) -> char {
+    match piece {
+        Piece::BKing => '将',
+        Piece::BGuard => '士',
+        Piece::BBishop => '象',
+        Piece::BHorse => '馬',
+        Piece::BRook => '車',
+        Piece::BCannon => '砲',
+        Piece::BPawn => '卒',
+        Piece::Empty => '·',
+        Piece::RKing => '帅',
+        Piece::RGuard => '仕',
+        Piece::RBishop => '相',
+        Piece::RHorse => '傌',
+        Piece::RRook => '俥',
+        Piece::RCannon => '炮',
+        Piece::RPawn => '兵',
+    }
 }
 
 impl Application for XiangqiApp {
@@ -107,7 +129,7 @@ impl Application for XiangqiApp {
                                 return Command::perform(
                                     async move {
                                         let mut engine = engine_clone.lock().await;
-                                        let (best_move, _score) = engine.search(&mut board_clone_for_engine, 10); // Use cloned board
+                                        let (best_move, _score) = engine.search(&mut board_clone_for_engine, 8); // Use cloned board
                                         best_move
                                     },
                                     Message::EngineMoved,
@@ -269,14 +291,24 @@ impl<'a> Program<Message> for BoardCanvas<'a> {
                         iced::Color::from_rgb8(0, 0, 0)
                     };
                     let text = canvas::Text {
-                        content: piece.to_fen_char().to_string(),
+                        content: get_chinese_piece_char(piece).to_string(),
                         position: Point::new(x, y),
                         color,
-                        size: Pixels(SQUARE_SIZE * 0.8),
+                        size: Pixels(SQUARE_SIZE * 0.6),
+                        font: CHINESE_FONT,
                         horizontal_alignment: iced::alignment::Horizontal::Center,
                         vertical_alignment: iced::alignment::Vertical::Center,
                         ..canvas::Text::default()
                     };
+                    let circle = canvas::Path::circle(Point::new(x, y), SQUARE_SIZE * 0.4); // Define the circle path
+                    // Draw shadow for the piece
+                    let shadow_offset = 3.0;
+                    let shadow_circle = canvas::Path::circle(Point::new(x + shadow_offset, y + shadow_offset), SQUARE_SIZE * 0.4);
+                    frame.fill(&shadow_circle, iced::Color::from_rgba8(0, 0, 0, 0.4)); // More visible semi-transparent black for shadow
+
+                    // Draw solid background for the piece
+                    frame.fill(&circle, iced::Color::from_rgb8(240, 240, 240)); // Slightly off-white background for circle
+                    frame.stroke(&circle, Stroke::default().with_width(2.0).with_color(iced::Color::from_rgb8(0, 0, 0))); // Thicker black border
                     frame.fill_text(text);
                 }
             }
