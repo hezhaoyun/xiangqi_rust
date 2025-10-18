@@ -43,6 +43,7 @@ struct XiangqiApp {
     board: Arc<Mutex<Board>>,
     engine: Arc<TokioMutex<Engine>>,
     selected_square: Option<usize>,
+    last_move: Option<Move>,
     game_state: GameState,
     board_cache: canvas::Cache,
 }
@@ -86,6 +87,7 @@ impl Application for XiangqiApp {
             ))),
             engine: Arc::new(TokioMutex::new(Engine::new(16))),
             selected_square: None,
+            last_move: None,
             game_state: GameState::PlayerTurn,
             board_cache: canvas::Cache::new(),
         };
@@ -109,6 +111,7 @@ impl Application for XiangqiApp {
                         if let Some(&mv) = mv {
                             board.move_piece(mv);
                             self.selected_square = None;
+                            self.last_move = Some(mv);
                             self.board_cache.clear();
 
                             let current_player = board.player_to_move.opponent(); // The player who just moved
@@ -148,6 +151,7 @@ impl Application for XiangqiApp {
                         "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1",
                     )));
                     self.selected_square = None;
+                    self.last_move = None;
                     self.game_state = GameState::PlayerTurn;
                     self.board_cache.clear();
                     Command::none()
@@ -159,6 +163,7 @@ impl Application for XiangqiApp {
                     let board_lock = self.board.clone();
                     let mut board = board_lock.lock().unwrap();
                     board.move_piece(mv);
+                    self.last_move = Some(mv);
                     self.board_cache.clear();
 
                     let current_player = board.player_to_move.opponent(); // The player who just moved
@@ -182,6 +187,7 @@ impl Application for XiangqiApp {
                         "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1",
                     )));
                     self.selected_square = None;
+                    self.last_move = None;
                     self.game_state = GameState::PlayerTurn;
                     self.board_cache.clear();
                     Command::none()
@@ -202,7 +208,7 @@ impl Application for XiangqiApp {
             GameState::GameOver(ref msg) => msg.as_str(),
         };
 
-        let canvas = canvas(BoardCanvas::new(&self.board, self.selected_square))
+        let canvas = canvas(BoardCanvas::new(&self.board, self.selected_square, self.last_move))
             .width(Length::Fixed(BOARD_SIZE))
             .height(Length::Fixed(BOARD_HEIGHT));
 
@@ -229,11 +235,12 @@ impl Application for XiangqiApp {
 struct BoardCanvas<'a> {
     board: &'a Mutex<Board>,
     selected_square: Option<usize>,
+    last_move: Option<Move>,
 }
 
 impl<'a> BoardCanvas<'a> {
-    fn new(board: &'a Mutex<Board>, selected_square: Option<usize>) -> Self {
-        Self { board, selected_square }
+    fn new(board: &'a Mutex<Board>, selected_square: Option<usize>, last_move: Option<Move>) -> Self {
+        Self { board, selected_square, last_move }
     }
 }
 
@@ -277,6 +284,27 @@ impl<'a> Program<Message> for BoardCanvas<'a> {
         palace_path(&mut frame, 3.5*SQUARE_SIZE, 7.5*SQUARE_SIZE, 5.5*SQUARE_SIZE, 9.5*SQUARE_SIZE);
         palace_path(&mut frame, 3.5*SQUARE_SIZE, 9.5*SQUARE_SIZE, 5.5*SQUARE_SIZE, 7.5*SQUARE_SIZE);
 
+        // Highlight last move
+        if let Some(mv) = self.last_move {
+            let from_sq = mv.from_sq();
+            let to_sq = mv.to_sq();
+
+            // Highlight from_sq
+            let r_from = from_sq / 9;
+            let c_from = from_sq % 9;
+            let x_from = c_from as f32 * SQUARE_SIZE;
+            let y_from = r_from as f32 * SQUARE_SIZE;
+            let from_path = canvas::Path::rectangle(Point::new(x_from, y_from), Size::new(SQUARE_SIZE, SQUARE_SIZE));
+            frame.fill(&from_path, iced::Color::from_rgba(1.0, 1.0, 0.0, 0.3)); // Semi-transparent yellow
+
+            // Highlight to_sq
+            let r_to = to_sq / 9;
+            let c_to = to_sq % 9;
+            let x_to = c_to as f32 * SQUARE_SIZE;
+            let y_to = r_to as f32 * SQUARE_SIZE;
+            let to_path = canvas::Path::rectangle(Point::new(x_to, y_to), Size::new(SQUARE_SIZE, SQUARE_SIZE));
+            frame.fill(&to_path, iced::Color::from_rgba(0.0, 1.0, 0.0, 0.3)); // Semi-transparent green
+        }
 
         // Draw pieces
         for r in 0..10 {
