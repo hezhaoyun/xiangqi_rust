@@ -249,7 +249,7 @@ impl XiangqiApp {
         Command::perform(
             async move {
                 let mut engine = engine_clone.lock().await;
-                let (best_move, _score) = engine.search(&mut board.clone(), 11);
+                let (best_move, _score) = engine.search(&mut board.clone(), 10);
                 best_move
             },
             Message::EngineMoved,

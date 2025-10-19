@@ -7,10 +7,8 @@ pub mod tt;
 pub mod evaluate;
 pub mod engine;
 pub mod opening_book;
-pub mod tui;
 pub mod gui;
 
 fn main() {
-    // tui::run();
     gui::run().expect("Failed to run GUI");
 }
