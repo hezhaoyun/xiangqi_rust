@@ -1,11 +1,5 @@
-[package]
-name = "xiangqi_rust"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-once_cell = "1.19.0"
-rand = "0.8"
-iced = { version = "0.12.1", features = ["tokio", "canvas", "svg"] }
-tokio = { version = "1", features = ["full"] }
-crossterm = "0.27.0"
+[workspace]
+members = [
+    "crates/engine",
+    "crates/gui",
+]

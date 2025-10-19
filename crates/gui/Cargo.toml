@@ -1,0 +1,14 @@
+[package]
+name = "gui"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+iced = { version = "0.12.1", features = ["tokio", "canvas", "svg"] }
+tokio = { version = "1", features = ["full"] }
+crossterm = "0.27.0"
+engine = { path = "../engine" }
+
+[[bin]]
+name = "xiangqi_gui"
+path = "src/main.rs"

@@ -16,10 +16,10 @@ use iced::widget::canvas::event::Status;
 use std::sync::{Arc, Mutex};
 use tokio::sync::Mutex as TokioMutex;
 
-use crate::bitboard::Board;
-use crate::constants::{Piece, Player};
-use crate::engine::Engine;
-use crate::r#move::Move;
+use engine::bitboard::Board;
+use engine::constants::{Piece, Player};
+use engine::engine::Engine;
+use engine::r#move::Move;
 
 const CHINESE_FONT: Font = Font::with_name("PingFang SC");
 
@@ -311,7 +311,7 @@ impl XiangqiApp {
     fn check_for_game_over(&mut self, board: &Board) -> bool {
         let legal_moves = board.clone().generate_legal_moves();
         if legal_moves.is_empty() {
-            if crate::move_gen::is_king_in_check(board, board.player_to_move) {
+            if engine::move_gen::is_king_in_check(board, board.player_to_move) {
                 self.game_state = GameState::GameOver(format!("{:?} wins by checkmate!", board.player_to_move.opponent()));
             } else {
                 self.game_state = GameState::GameOver("Stalemate!".to_string());
