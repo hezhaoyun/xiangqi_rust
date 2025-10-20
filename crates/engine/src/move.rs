@@ -37,4 +37,15 @@ impl Move {
     pub fn is_capture(&self) -> bool {
         (self.0 >> 14) & 1 != 0
     }
+
+    pub fn to_uci_string(&self) -> String {
+        let from_sq = self.from_sq();
+        let to_sq = self.to_sq();
+        let from_file = (from_sq % 9) as u8 + b'a';
+        let from_rank = 9 - (from_sq / 9) as u8;
+        let to_file = (to_sq % 9) as u8 + b'a';
+        let to_rank = 9 - (to_sq / 9) as u8;
+        format!("{}{}{}{}", from_file as char, from_rank, to_file as char, to_rank)
+    }
 }
+

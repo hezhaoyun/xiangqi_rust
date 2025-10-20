@@ -8,6 +8,7 @@ use crate::move_gen;
 use crate::opening_book;
 use crate::tt::{TranspositionTable, TtFlag};
 use crate::zobrist;
+use std::time::Instant;
 
 /// A struct to hold a move and its score for move ordering.
 
@@ -23,6 +24,9 @@ pub struct Engine {
     pub tt: TranspositionTable,
     pub history_table: [[i32; 90]; 14],
     pub nodes_searched: u64,
+    pub stop_search: bool,
+    pub start_time: Instant,
+    pub time_limit_ms: Option<u128>,
 }
 
 impl Engine {
@@ -31,6 +35,9 @@ impl Engine {
             tt: TranspositionTable::new(tt_size_mb),
             history_table: [[0; 90]; 14],
             nodes_searched: 0,
+            stop_search: false,
+            start_time: Instant::now(),
+            time_limit_ms: None,
         }
     }
 
@@ -78,9 +85,18 @@ impl Engine {
 
     /// The main search function using iterative deepening.
 
-    pub fn search(&mut self, board: &mut Board, max_depth: i32) -> (Move, i32) {
+    pub fn search(
+        &mut self,
+        board: &mut Board,
+        max_depth: i32,
+        time_limit_ms: Option<u128>,
+    ) -> (Move, i32) {
         self.clear_history();
         self.tt.clear();
+        self.nodes_searched = 0;
+        self.stop_search = false;
+        self.start_time = Instant::now();
+        self.time_limit_ms = time_limit_ms;
 
         let mut best_move_overall = Move::new(0, 0, None);
         let mut best_score_overall = -MATE_VALUE;
@@ -100,6 +116,10 @@ impl Engine {
             let (best_move_this_depth, best_score_this_depth) =
                 self.negamax(board, current_depth, -MATE_VALUE, MATE_VALUE);
 
+            if self.stop_search {
+                break;
+            }
+
             if best_move_this_depth.from_sq() != 0 || best_move_this_depth.to_sq() != 0 {
                 best_move_overall = best_move_this_depth;
 
@@ -118,12 +138,14 @@ impl Engine {
             };
 
             println!(
-                "  Depth {}: Best score = {}, Best move = {} -> {}",
+                "info depth {} score cp {} nodes {} time {} pv {}",
                 current_depth,
                 display_score,
-                best_move_overall.from_sq(),
-                best_move_overall.to_sq()
+                self.nodes_searched,
+                self.start_time.elapsed().as_millis(),
+                best_move_overall.to_uci_string()
             );
+
             if best_score_overall.abs() > MATE_VALUE - 100 {
                 break;
             }
@@ -141,6 +163,18 @@ impl Engine {
         mut alpha: i32,
         mut beta: i32,
     ) -> (Move, i32) {
+        if self.nodes_searched % 2048 == 0 {
+            if let Some(limit) = self.time_limit_ms {
+                if self.start_time.elapsed().as_millis() >= limit {
+                    self.stop_search = true;
+                }
+            }
+        }
+
+        if self.stop_search {
+            return (Move::new(0, 0, None), 0);
+        }
+
         self.nodes_searched += 1;
         let hash_key = board.hash_key;
         let player = board.player_to_move;
@@ -348,6 +382,17 @@ impl Engine {
     /// Quiescence search to evaluate noisy positions.
 
     fn quiescence_search(&mut self, board: &mut Board, mut alpha: i32, beta: i32) -> i32 {
+        if self.nodes_searched % 2048 == 0 {
+            if let Some(limit) = self.time_limit_ms {
+                if self.start_time.elapsed().as_millis() >= limit {
+                    self.stop_search = true;
+                }
+            }
+        }
+
+        if self.stop_search {
+            return 0;
+        }
         self.nodes_searched += 1;
         // Evaluate the current position statically
         let stand_pat = evaluate::evaluate(board);
