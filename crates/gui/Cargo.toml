@@ -4,8 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-iced = { version = "0.12.1", features = ["tokio", "canvas", "svg"] }
-tokio = { version = "1", features = ["full"] }
+iced = { version = "0.12.1", features = ["canvas", "svg", "advanced"] }
+futures = "0.3"
 crossterm = "0.27.0"
 engine = { path = "../engine" }
 

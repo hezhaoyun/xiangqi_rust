@@ -6,20 +6,23 @@
 //! - `update` is the Update logic: It processes messages to transition the state.
 //! - `view` is the View: It renders the UI based on the current state.
 
-use iced::widget::{canvas, text, Button, Column, Container, Row, TextInput};
 use iced::{
-    executor, Application, Command, Element, Font, Length, Padding, Pixels, Point, Rectangle, Renderer, Settings, Size, Subscription, Theme
+    executor,
+    widget::{canvas::{self, event, Frame, Geometry, Path, Program, Stroke}, text, Button, Column, Container, Row, TextInput},
+    Application, Command, Element, Font, Length, Padding, Pixels, Point, Rectangle, Renderer, Settings, Size, Subscription, Theme, mouse
 };
-use iced::widget::canvas::{Program, Geometry, Frame, Stroke, Event as CanvasEvent};
-use iced::mouse::{Cursor, Event as MouseEvent};
-use iced::widget::canvas::event::Status;
 use std::sync::{Arc, Mutex};
-use tokio::sync::Mutex as TokioMutex;
-
-use engine::bitboard::Board;
-use engine::constants::{Piece, Player};
-use engine::engine::Engine;
-use engine::r#move::Move;
+use engine::{
+    bitboard::Board,
+    constants::{Piece, Player},
+    r#move::Move,
+};
+use std::process::{Command as StdCommand, Stdio, ChildStdin, ChildStdout};
+use std::io::{BufRead, BufReader, Write};
+use iced::advanced::subscription::{Recipe};
+use futures::stream::BoxStream;
+use std::thread;
+use futures::channel::mpsc;
 
 const CHINESE_FONT: Font = Font::with_name("PingFang SC");
 
@@ -44,20 +47,17 @@ enum Message {
     NewGame,
     UndoMove,
     SquareClicked(usize),
-    EngineMoved(Move),
+    UciResponse(String),
     FenInputChanged(String),
     LoadFen,
+    PlayerMoveFinalized(Result<(Move, Piece, String, Option<String>), ()>),
 }
 
 /// The main application state (the "Model").
 struct XiangqiApp {
-    // --- State shared across threads ---
-    // `Arc<Mutex<T>>` is used to safely share and mutate data (like the `Board`)
-    // between the main UI thread and other threads or async tasks.
-    // `Arc` provides shared ownership, and `Mutex` ensures exclusive access for mutation.
     board: Arc<Mutex<Board>>,
-    // `TokioMutex` is the async-aware version of `Mutex`, necessary for use in `async` blocks.
-    engine: Arc<TokioMutex<Engine>>,
+    uci_stdin: Arc<Mutex<ChildStdin>>,
+    uci_stdout: Arc<Mutex<BufReader<ChildStdout>>>,
 
     // --- UI-specific state ---
     selected_square: Option<usize>,
@@ -67,6 +67,7 @@ struct XiangqiApp {
     game_state: GameState,
     board_cache: canvas::Cache,
 }
+
 
 /// Represents the current high-level state of the game.
 enum GameState {
@@ -85,9 +86,38 @@ impl Application for XiangqiApp {
 
     fn new(_flags: ()) -> (Self, Command<Message>) {
         let initial_fen = "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1";
+        let mut child = StdCommand::new("./target/release/uci")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .expect("Failed to spawn UCI engine");
+
+        let mut stdin = child.stdin.take().expect("Failed to open stdin");
+        let mut stdout = BufReader::new(child.stdout.take().expect("Failed to open stdout"));
+
+        // UCI Initialization
+        writeln!(stdin, "uci").expect("Failed to write to UCI stdin");
+        let mut line = String::new();
+        loop {
+            line.clear();
+            stdout.read_line(&mut line).expect("Failed to read from UCI stdout");
+            if line.trim() == "uciok" {
+                break;
+            }
+        }
+        writeln!(stdin, "isready").expect("Failed to write to UCI stdin");
+        loop {
+            line.clear();
+            stdout.read_line(&mut line).expect("Failed to read from UCI stdout");
+            if line.trim() == "readyok" {
+                break;
+            }
+        }
+
         let app = XiangqiApp {
             board: Arc::new(Mutex::new(Board::from_fen(initial_fen))),
-            engine: Arc::new(TokioMutex::new(Engine::new(16))),
+            uci_stdin: Arc::new(Mutex::new(stdin)),
+            uci_stdout: Arc::new(Mutex::new(stdout)),
             selected_square: None,
             last_move: None,
             move_history: Vec::new(),
@@ -102,7 +132,6 @@ impl Application for XiangqiApp {
         String::from("Xiangqi")
     }
 
-    /// The main update function, dispatching messages based on the current game state.
     fn update(&mut self, message: Message) -> Command<Message> {
         match self.game_state {
             GameState::PlayerTurn => self.handle_player_turn(message),
@@ -112,10 +141,11 @@ impl Application for XiangqiApp {
     }
     
     fn subscription(&self) -> Subscription<Message> {
-        Subscription::none()
+        Subscription::from_recipe(UciSubscription {
+            uci_stdout: self.uci_stdout.clone(),
+        })
     }
 
-    /// The main view function, building the UI from the current state.
     fn view(&'_ self) -> Element<'_, Message> {
         let status_text = match &self.game_state {
             GameState::PlayerTurn => "Your Turn",
@@ -123,7 +153,7 @@ impl Application for XiangqiApp {
             GameState::GameOver(ref msg) => msg.as_str(),
         };
 
-        let canvas = canvas(BoardCanvas::new(&self.board, self.selected_square, self.last_move))
+        let canvas = canvas::Canvas::new(BoardCanvas::new(self.board.clone(), self.selected_square, self.last_move))
             .width(Length::Fixed(BOARD_SIZE))
             .height(Length::Fixed(BOARD_HEIGHT));
 
@@ -156,6 +186,52 @@ impl Application for XiangqiApp {
     }
 }
 
+struct UciSubscription {
+    uci_stdout: Arc<Mutex<BufReader<ChildStdout>>>,
+}
+
+impl Recipe for UciSubscription {
+    type Output = Message;
+
+    fn hash(&self, state: &mut iced::advanced::Hasher) {
+        use std::hash::Hash;
+        struct UciListener;
+        std::any::TypeId::of::<UciListener>().hash(state);
+    }
+
+    fn stream(
+        self: Box<Self>,
+        _input: BoxStream<'static, (iced::Event, iced::widget::canvas::event::Status)>,
+    ) -> BoxStream<'static, Self::Output> {
+        let (tx, rx) = mpsc::unbounded();
+
+        let uci_stdout = self.uci_stdout;
+        thread::spawn(move || {
+            loop {
+                let mut line = String::new();
+                let read_result = {
+                    let mut stdout_guard = uci_stdout.lock().unwrap();
+                    stdout_guard.read_line(&mut line)
+                };
+
+                match read_result {
+                    Ok(0) => break, // EOF
+                    Ok(_) => {
+                        if !line.trim().is_empty() {
+                            if tx.unbounded_send(Message::UciResponse(line)).is_err() {
+                                break; // Receiver dropped
+                            }
+                        }
+                    }
+                    Err(_) => break, // Error
+                }
+            }
+        });
+
+        Box::pin(rx)
+    }
+}
+
 // --- Update Helper Functions ---
 
 impl XiangqiApp {
@@ -169,6 +245,22 @@ impl XiangqiApp {
                 self.fen_input = new_fen;
                 Command::none()
             }
+            Message::PlayerMoveFinalized(result) => match result {
+                Ok((mv, captured, fen, game_over_state)) => {
+                    self.fen_input = fen;
+                    self.move_history.push((mv, captured));
+                    self.last_move = Some(mv);
+                    self.board_cache.clear();
+
+                    if let Some(msg) = game_over_state {
+                        self.game_state = GameState::GameOver(msg);
+                        Command::none()
+                    } else {
+                        self.trigger_engine_move()
+                    }
+                }
+                Err(()) => Command::none(), // Invalid move
+            },
             Message::LoadFen => self.handle_load_fen(),
             // Ignore other messages like EngineMoved
             _ => Command::none(),
@@ -178,18 +270,31 @@ impl XiangqiApp {
     /// Handles all messages received while the engine is thinking.
     fn handle_engine_thinking(&mut self, message: Message) -> Command<Message> {
         match message {
-            Message::EngineMoved(mv) => {
-                let board_lock = self.board.clone();
-                let mut board = board_lock.lock().unwrap();
-                let captured = board.move_piece(mv);
-                self.fen_input = board.to_fen();
-                self.move_history.push((mv, captured));
-                self.last_move = Some(mv);
-                self.board_cache.clear();
+            Message::UciResponse(response) => {
+                if response.starts_with("bestmove") {
+                    let parts: Vec<&str> = response.split_whitespace().collect();
+                    if let Some(move_str) = parts.get(1) {
+                        let board_lock = self.board.clone();
+                        let mut board = board_lock.lock().unwrap();
+                        if let Some(mv) = self.parse_uci_move(&board, move_str) {
+                            let captured = board.move_piece(mv);
+                            self.fen_input = board.to_fen();
+                            self.move_history.push((mv, captured));
+                            self.last_move = Some(mv);
+                            self.board_cache.clear();
 
-                // If the game is not over after the engine's move, set state back to player's turn.
-                if !self.check_for_game_over(&board) {
-                    self.game_state = GameState::PlayerTurn;
+                            let legal_moves = board.generate_legal_moves();
+                            if legal_moves.is_empty() {
+                                if engine::move_gen::is_king_in_check(&board, board.player_to_move) {
+                                    self.game_state = GameState::GameOver(format!("{:?} wins by checkmate!", board.player_to_move.opponent()));
+                                } else {
+                                    self.game_state = GameState::GameOver("Stalemate!".to_string());
+                                }
+                            } else {
+                                self.game_state = GameState::PlayerTurn;
+                            }
+                        }
+                    }
                 }
                 Command::none()
             }
@@ -197,6 +302,7 @@ impl XiangqiApp {
             _ => Command::none(),
         }
     }
+
 
     /// Handles all messages received after the game has ended.
     fn handle_game_over(&mut self, message: Message) -> Command<Message> {
@@ -210,51 +316,63 @@ impl XiangqiApp {
     /// Logic for when a square is clicked.
     fn handle_square_clicked(&mut self, sq: usize) -> Command<Message> {
         if let Some(from_sq) = self.selected_square {
-            let board_lock = self.board.clone();
-            let mut board = board_lock.lock().unwrap();
-            let legal_moves = board.generate_legal_moves();
-            let mv = legal_moves.iter().find(|m| m.from_sq() == from_sq && m.to_sq() == sq);
+            // Second square clicked, clear selection for UI responsiveness.
+            self.selected_square = None;
+            self.board_cache.clear();
+            let board = self.board.clone();
 
-            if let Some(&mv) = mv {
-                // A valid move was made.
-                let captured = board.move_piece(mv);
-                self.fen_input = board.to_fen();
-                self.move_history.push((mv, captured));
-                self.selected_square = None;
-                self.last_move = Some(mv);
-                self.board_cache.clear();
+            return Command::perform(
+                async move {
+                    let mut board = board.lock().unwrap();
+                    // Perform heavy computation in background
+                    let legal_moves = board.generate_legal_moves();
+                    if let Some(&mv) = legal_moves.iter().find(|m| m.from_sq() == from_sq && m.to_sq() == sq) {
+                        // Valid move
+                        let captured = board.move_piece(mv);
+                        let fen = board.to_fen();
 
-                // Check if the game is over, otherwise trigger engine.
-                if self.check_for_game_over(&board) {
-                    return Command::none();
-                } else {
-                    return self.trigger_engine_move(board.clone());
-                }
-            } else {
-                // A second, invalid square was clicked. Select the new square instead.
-                self.selected_square = Some(sq);
-            }
+                        let next_legal_moves = board.generate_legal_moves();
+                        let game_over_state = if next_legal_moves.is_empty() {
+                            if engine::move_gen::is_king_in_check(&board, board.player_to_move) {
+                                Some(format!("{:?} wins by checkmate!", board.player_to_move.opponent()))
+                            } else {
+                                Some("Stalemate!".to_string())
+                            }
+                        } else {
+                            None
+                        };
+                        Ok((mv, captured, fen, game_over_state))
+                    } else {
+                        // Invalid move
+                        Err(())
+                    }
+                },
+                Message::PlayerMoveFinalized,
+            );
         } else {
-            // This is the first square selected.
+            // First square selected.
             self.selected_square = Some(sq);
+            self.board_cache.clear(); // Redraw to show selection
         }
         Command::none()
     }
 
     /// Triggers the engine to search for and make a move.
-    fn trigger_engine_move(&mut self, board: Board) -> Command<Message> {
+    fn trigger_engine_move(&mut self) -> Command<Message> {
         self.game_state = GameState::EngineThinking;
-        let engine_clone = Arc::clone(&self.engine);
-        
+        let board_fen = self.board.lock().unwrap().to_fen();
+        let uci_stdin = self.uci_stdin.clone();
+
         Command::perform(
             async move {
-                let mut engine = engine_clone.lock().await;
-                let (best_move, _score) = engine.search(&mut board.clone(), 10);
-                best_move
+                let mut uci_stdin = uci_stdin.lock().unwrap();
+                writeln!(uci_stdin, "position fen {}", board_fen).ok();
+                writeln!(uci_stdin, "go").ok();
             },
-            Message::EngineMoved,
+            |_| Message::UciResponse("".to_string()), // We get the response via subscription
         )
     }
+
 
     /// Resets the application to the initial state for a new game.
     fn handle_new_game(&mut self) -> Command<Message> {
@@ -306,38 +424,41 @@ impl XiangqiApp {
         Command::none()
     }
 
-    /// Checks if the game has ended and updates the state if it has.
-    /// Returns true if the game is over, false otherwise.
-    fn check_for_game_over(&mut self, board: &Board) -> bool {
-        let legal_moves = board.clone().generate_legal_moves();
-        if legal_moves.is_empty() {
-            if engine::move_gen::is_king_in_check(board, board.player_to_move) {
-                self.game_state = GameState::GameOver(format!("{:?} wins by checkmate!", board.player_to_move.opponent()));
-            } else {
-                self.game_state = GameState::GameOver("Stalemate!".to_string());
-            }
-            true
-        } else {
-            false
+
+
+    fn parse_uci_move(&self, board: &Board, move_str: &str) -> Option<Move> {
+        if move_str.len() < 4 {
+            return None;
         }
+        let from_file = move_str.chars().nth(0)? as u8 - b'a';
+        let from_rank = move_str.chars().nth(1)? as u8 - b'0';
+        let to_file = move_str.chars().nth(2)? as u8 - b'a';
+        let to_rank = move_str.chars().nth(3)? as u8 - b'0';
+
+        let from_sq = (9 - from_rank) as usize * 9 + from_file as usize;
+        let to_sq = (9 - to_rank) as usize * 9 + to_file as usize;
+
+        let captured_piece = board.board[to_sq];
+
+        Some(Move::new(from_sq, to_sq, if captured_piece == engine::constants::Piece::Empty { None } else { Some(captured_piece) }))
     }
 }
 
 // --- Canvas Drawing Logic ---
 
-struct BoardCanvas<'a> {
-    board: &'a Mutex<Board>,
+struct BoardCanvas {
+    board: Arc<Mutex<Board>>,
     selected_square: Option<usize>,
     last_move: Option<Move>,
 }
 
-impl<'a> BoardCanvas<'a> {
-    fn new(board: &'a Mutex<Board>, selected_square: Option<usize>, last_move: Option<Move>) -> Self {
+impl BoardCanvas {
+    fn new(board: Arc<Mutex<Board>>, selected_square: Option<usize>, last_move: Option<Move>) -> Self {
         Self { board, selected_square, last_move }
     }
 }
 
-impl<'a> Program<Message> for BoardCanvas<'a> {
+impl Program<Message> for BoardCanvas {
     type State = ();
 
     fn draw(
@@ -346,7 +467,7 @@ impl<'a> Program<Message> for BoardCanvas<'a> {
         renderer: &Renderer,
         _theme: &Theme,
         bounds: Rectangle,
-        _cursor: Cursor,
+        _cursor: mouse::Cursor,
     ) -> Vec<Geometry> {
         let board = self.board.lock().unwrap();
         let mut frame = Frame::new(renderer, bounds.size());
@@ -362,47 +483,47 @@ impl<'a> Program<Message> for BoardCanvas<'a> {
     fn update(
         &self,
         _state: &mut Self::State,
-        event: CanvasEvent,
+        event: event::Event,
         bounds: Rectangle,
-        cursor: Cursor,
-    ) -> (Status, Option<Message>) {
-        if let CanvasEvent::Mouse(MouseEvent::ButtonPressed(iced::mouse::Button::Left)) = event {
+        cursor: mouse::Cursor,
+    ) -> (event::Status, Option<Message>) {
+        if let event::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) = event {
             if let Some(pos) = cursor.position_in(bounds) {
                 let c = (pos.x / SQUARE_SIZE).floor() as usize;
                 let r = (pos.y / SQUARE_SIZE).floor() as usize;
                 if r < 10 && c < 9 {
                     let sq = r * 9 + c;
-                    return (Status::Captured, Some(Message::SquareClicked(sq)));
+                    return (event::Status::Captured, Some(Message::SquareClicked(sq)));
                 }
             }
         }
-        (Status::Ignored, None)
+        (event::Status::Ignored, None)
     }
 }
 
 // --- Canvas Drawing Helper Functions ---
 
-impl<'a> BoardCanvas<'a> {
+impl BoardCanvas {
     fn draw_grid(&self, frame: &mut Frame) {
         // Board background
-        let background = canvas::Path::rectangle(Point::new(0.0, 0.0), frame.size());
+        let background = Path::rectangle(Point::new(0.0, 0.0), frame.size());
         frame.fill(&background, iced::Color::from_rgb8(235, 209, 166));
 
         // Horizontal and vertical lines
         for i in 0..=9 {
             let y = i as f32 * SQUARE_SIZE + SQUARE_SIZE / 2.0;
-            let path = canvas::Path::line(Point::new(SQUARE_SIZE/2.0, y), Point::new(BOARD_SIZE - SQUARE_SIZE/2.0, y));
+            let path = Path::line(Point::new(SQUARE_SIZE/2.0, y), Point::new(BOARD_SIZE - SQUARE_SIZE/2.0, y));
             frame.stroke(&path, Stroke::default().with_width(1.0));
         }
         for i in 0..=8 {
             let x = i as f32 * SQUARE_SIZE + SQUARE_SIZE / 2.0;
-            let path = canvas::Path::line(Point::new(x, SQUARE_SIZE/2.0), Point::new(x, BOARD_HEIGHT - SQUARE_SIZE/2.0));
+            let path = Path::line(Point::new(x, SQUARE_SIZE/2.0), Point::new(x, BOARD_HEIGHT - SQUARE_SIZE/2.0));
             frame.stroke(&path, Stroke::default().with_width(1.0));
         }
         
         // Palace diagonal lines
         let palace_path = |frame: &mut Frame, x1, y1, x2, y2| {
-            let path = canvas::Path::line(Point::new(x1,y1), Point::new(x2,y2));
+            let path = Path::line(Point::new(x1,y1), Point::new(x2,y2));
             frame.stroke(&path, Stroke::default().with_width(1.0));
         };
         palace_path(frame, 3.5*SQUARE_SIZE, 0.5*SQUARE_SIZE, 5.5*SQUARE_SIZE, 2.5*SQUARE_SIZE);
@@ -421,14 +542,14 @@ impl<'a> BoardCanvas<'a> {
             let c_from = from_sq % 9;
             let x_from = c_from as f32 * SQUARE_SIZE;
             let y_from = r_from as f32 * SQUARE_SIZE;
-            let from_path = canvas::Path::rectangle(Point::new(x_from, y_from), Size::new(SQUARE_SIZE, SQUARE_SIZE));
+            let from_path = Path::rectangle(Point::new(x_from, y_from), Size::new(SQUARE_SIZE, SQUARE_SIZE));
             frame.fill(&from_path, iced::Color::from_rgba(1.0, 1.0, 0.0, 0.3));
 
             let r_to = to_sq / 9;
             let c_to = to_sq % 9;
             let x_to = c_to as f32 * SQUARE_SIZE;
             let y_to = r_to as f32 * SQUARE_SIZE;
-            let to_path = canvas::Path::rectangle(Point::new(x_to, y_to), Size::new(SQUARE_SIZE, SQUARE_SIZE));
+            let to_path = Path::rectangle(Point::new(x_to, y_to), Size::new(SQUARE_SIZE, SQUARE_SIZE));
             frame.fill(&to_path, iced::Color::from_rgba(0.0, 1.0, 0.0, 0.3));
         }
     }
@@ -445,19 +566,21 @@ impl<'a> BoardCanvas<'a> {
                     } else {
                         iced::Color::from_rgb8(0, 0, 0)
                     };
+                    let text_content = get_chinese_piece_char(piece).to_string();
                     let text = canvas::Text {
-                        content: get_chinese_piece_char(piece).to_string(),
+                        content: text_content,
                         position: Point::new(x, y),
                         color,
                         size: Pixels(SQUARE_SIZE * 0.6),
                         font: CHINESE_FONT,
                         horizontal_alignment: iced::alignment::Horizontal::Center,
                         vertical_alignment: iced::alignment::Vertical::Center,
-                        ..canvas::Text::default()
+                        line_height: iced::widget::text::LineHeight::default(),
+                        shaping: iced::widget::text::Shaping::Basic,
                     };
-                    let circle = canvas::Path::circle(Point::new(x, y), SQUARE_SIZE * 0.4);
+                    let circle = Path::circle(Point::new(x, y), SQUARE_SIZE * 0.4);
                     let shadow_offset = 3.0;
-                    let shadow_circle = canvas::Path::circle(Point::new(x + shadow_offset, y + shadow_offset), SQUARE_SIZE * 0.4);
+                    let shadow_circle = Path::circle(Point::new(x + shadow_offset, y + shadow_offset), SQUARE_SIZE * 0.4);
                     frame.fill(&shadow_circle, iced::Color::from_rgba8(0, 0, 0, 0.4));
                     frame.fill(&circle, iced::Color::from_rgb8(240, 240, 240));
                     frame.stroke(&circle, Stroke::default().with_width(2.0).with_color(iced::Color::from_rgb8(0, 0, 0)));
@@ -473,7 +596,7 @@ impl<'a> BoardCanvas<'a> {
             let c = sq % 9;
             let x = c as f32 * SQUARE_SIZE;
             let y = r as f32 * SQUARE_SIZE;
-            let path = canvas::Path::rectangle(Point::new(x,y), Size::new(SQUARE_SIZE, SQUARE_SIZE));
+            let path = Path::rectangle(Point::new(x,y), Size::new(SQUARE_SIZE, SQUARE_SIZE));
             frame.stroke(&path, Stroke::default().with_width(3.0).with_color(iced::Color::from_rgb(0.0, 1.0, 0.0)));
         }
     }
