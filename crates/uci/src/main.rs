@@ -65,7 +65,7 @@ fn main() {
                 "go" => {
                     if let Some(ref mut b) = board {
                         let mut engine_lock = engine.lock().unwrap();
-                        let (best_move, _) = engine_lock.search(b, 5); // Search for 5 ply
+                        let (best_move, _) = engine_lock.search(b, 10);
                         let from_sq = best_move.from_sq();
                         let to_sq = best_move.to_sq();
                         let from_file = (from_sq % 9) as u8 + b'a';
