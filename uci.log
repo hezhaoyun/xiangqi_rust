@@ -2,33 +2,5 @@ Received: uci
 Received: isready
 Received: position fen rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C2C4/9/RNBAKABNR b - - 0 1
 Received: go movetime 3000
-Received: position fen rnbakabnr/9/1c7/p1p1p1p1p/9/9/P1P1P1PcP/1C2C1N2/9/RNBAKAB1R b - - 0 1
-Received: go movetime 3000
-Received: position fen rnbakab1r/9/1c4n2/p1p1p1p1p/9/9/P1P1P1PcP/1C2C1N2/9/RNBAKABR1 b - - 0 1
-Received: go movetime 3000
-Received: position fen rnbakabr1/9/1c4n2/p1p1p1p1p/9/2P6/P3P1PcP/1C2C1N2/9/RNBAKABR1 b - - 0 1
-Received: go movetime 3000
-Received: position fen rnbakabr1/9/1c4n2/p1p1p3p/6p2/2P6/P3P1PcP/1CN1C1N2/9/R1BAKABR1 b - - 0 1
-Received: go movetime 3000
-Received: position fen rn1akabr1/9/1c2b1n2/p1p1p3p/6p2/2P6/P3P1PcP/1CN1C1N2/R8/2BAKABR1 b - - 0 1
-Received: go movetime 3000
-Received: position fen r2akabr1/3n5/1c2b1n2/p1p1p3p/6p2/2P6/P3P1PcP/1CN1C1N2/3R5/2BAKABR1 b - - 0 1
-Received: go movetime 3000
-Received: position fen r2akabr1/3n5/1c2b1n2/p1p1p3p/6p2/2P6/P3P1PcP/1CN1C1N2/3R5/2BAKABR1 b - - 0 1
-Received: go movetime 3000
-Received: position fen r2akabr1/9/1c2bnn2/p1p1C3p/6p2/2P6/P3P1PcP/1CN3N2/3R5/2BAKABR1 b - - 0 1
-Received: go movetime 3000
-Received: position fen r2ak1br1/4a4/1c2bnn2/p1p1C3p/6p2/2P6/P3P1PcP/1CN1B1N2/3R5/2BAKA1R1 b - - 0 1
-Received: go movetime 3000
-Received: position fen r2ak1br1/4a4/1c2bn3/p1p1C3p/5np2/2P3P2/P3P2cP/1CN1B1N2/3R5/2BAKA1R1 b - - 0 1
-Received: go movetime 3000
-Received: position fen r2ak1br1/4a4/1c2bn3/p1p1C3p/5n3/2P3B2/P3P2cP/1CN3N2/3R5/2BAKA1R1 b - - 0 1
-Received: go movetime 3000
-Received: position fen r2ak1br1/4a4/1c2bnn2/p1p1C3p/9/2P6/P3P2cP/1CN1B1N2/3R5/2BAKA1R1 b - - 0 1
-Received: go movetime 3000
-Received: position fen r2ak1br1/4a4/1c2b1n2/p1p5p/6n2/2P1C4/P3P2cP/1CN1B1N2/3R5/2BAKA1R1 b - - 0 1
-Received: go movetime 3000
-Received: position fen r2ak1bR1/4a4/1c2b1n2/p1p5p/6n2/2P1C4/c3P3P/1CN1B1N2/3R5/2BAKA3 b - - 0 1
-Received: go movetime 3000
-Received: position fen r2ak1bn1/4a4/1c2b4/p1p5p/6n2/2P3C2/c3P3P/1CN1B1N2/3R5/2BAKA3 b - - 0 1
+Received: position fen rnbakabnr/9/1c7/p1p1p1pcp/9/9/P1P1P1P1P/1C2C1N2/9/RNBAKAB1R b - - 0 1
 Received: go movetime 3000

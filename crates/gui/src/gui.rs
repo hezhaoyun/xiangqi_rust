@@ -509,18 +509,49 @@ impl BoardCanvas {
         let background = Path::rectangle(Point::new(0.0, 0.0), frame.size());
         frame.fill(&background, iced::Color::from_rgb8(235, 209, 166));
 
-        // Horizontal and vertical lines
+        // Horizontal lines
         for i in 0..=9 {
             let y = i as f32 * SQUARE_SIZE + SQUARE_SIZE / 2.0;
             let path = Path::line(Point::new(SQUARE_SIZE/2.0, y), Point::new(BOARD_SIZE - SQUARE_SIZE/2.0, y));
             frame.stroke(&path, Stroke::default().with_width(1.0));
         }
+
+        // Vertical lines (with river gap)
         for i in 0..=8 {
             let x = i as f32 * SQUARE_SIZE + SQUARE_SIZE / 2.0;
-            let path = Path::line(Point::new(x, SQUARE_SIZE/2.0), Point::new(x, BOARD_HEIGHT - SQUARE_SIZE/2.0));
-            frame.stroke(&path, Stroke::default().with_width(1.0));
+            if i == 0 || i == 8 {
+                // Outer border lines are continuous
+                let path = Path::line(Point::new(x, SQUARE_SIZE/2.0), Point::new(x, BOARD_HEIGHT - SQUARE_SIZE/2.0));
+                frame.stroke(&path, Stroke::default().with_width(1.0));
+            } else {
+                // Inner lines have a gap for the river
+                let path1 = Path::line(Point::new(x, SQUARE_SIZE/2.0), Point::new(x, 4.5 * SQUARE_SIZE));
+                let path2 = Path::line(Point::new(x, 5.5 * SQUARE_SIZE), Point::new(x, BOARD_HEIGHT - SQUARE_SIZE/2.0));
+                frame.stroke(&path1, Stroke::default().with_width(1.0));
+                frame.stroke(&path2, Stroke::default().with_width(1.0));
+            }
         }
-        
+
+        // River text
+        let river_text = |frame: &mut Frame, text: &str, x: f32, y: f32| {
+            let text_widget = canvas::Text {
+                content: text.to_string(),
+                position: Point::new(x, y),
+                color: iced::Color::from_rgb8(0, 0, 0),
+                size: Pixels(SQUARE_SIZE * 0.8),
+                font: CHINESE_FONT,
+                horizontal_alignment: iced::alignment::Horizontal::Center,
+                vertical_alignment: iced::alignment::Vertical::Center,
+                line_height: iced::widget::text::LineHeight::default(),
+                shaping: iced::widget::text::Shaping::Basic,
+            };
+            frame.fill_text(text_widget);
+        };
+
+        // Place "楚河" and "漢界"
+        river_text(frame, "漢界", 2.0 * SQUARE_SIZE, 5.4 * SQUARE_SIZE - SQUARE_SIZE * 0.4);
+        river_text(frame, "楚河", 7.0 * SQUARE_SIZE, 5.4 * SQUARE_SIZE - SQUARE_SIZE * 0.4);
+
         // Palace diagonal lines
         let palace_path = |frame: &mut Frame, x1, y1, x2, y2| {
             let path = Path::line(Point::new(x1,y1), Point::new(x2,y2));
