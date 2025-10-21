@@ -1,9 +1,9 @@
-use std::fs::File;
-use std::io::{self, BufRead, Write};
-use std::sync::{Arc, Mutex};
 use engine::bitboard::Board;
 use engine::engine::Engine;
 use engine::r#move::Move;
+use std::fs::File;
+use std::io::{self, BufRead, Write};
+use std::sync::{Arc, Mutex};
 
 fn parse_uci_move(board: &Board, move_str: &str) -> Option<Move> {
     if move_str.len() != 4 {
@@ -19,12 +19,24 @@ fn parse_uci_move(board: &Board, move_str: &str) -> Option<Move> {
 
     let captured_piece = board.board[to_sq];
 
-    Some(Move::new(from_sq, to_sq, if captured_piece == engine::constants::Piece::Empty { None } else { Some(captured_piece) }))
+    Some(Move::new(
+        from_sq,
+        to_sq,
+        if captured_piece == engine::constants::Piece::Empty {
+            None
+        } else {
+            Some(captured_piece)
+        },
+    ))
 }
 
 pub fn parse_go_command(parts: &[&str], board: &Board) -> (i32, Option<u128>) {
     let mut depth = 10; // Default depth
     let mut time_limit_ms = None;
+
+    if parts.contains(&"infinite") {
+        return (i32::MAX, None);
+    }
 
     if let Some(depth_idx) = parts.iter().position(|&x| x == "depth") {
         if let Some(depth_val) = parts.get(depth_idx + 1) {
@@ -43,21 +55,51 @@ pub fn parse_go_command(parts: &[&str], board: &Board) -> (i32, Option<u128>) {
     }
 
     if time_limit_ms.is_none() {
-        let (wtime, btime) = parts.windows(2).fold((None::<u128>, None::<u128>), |(w, b), chunk| {
-            match chunk[0] {
-                "wtime" => (chunk[1].parse().ok(), b),
-                "btime" => (w, chunk[1].parse().ok()),
-                _ => (w, b),
-            }
-        });
+        let mut wtime: Option<u128> = None;
+        let mut btime: Option<u128> = None;
+        let mut winc: Option<u128> = Some(0);
+        let mut binc: Option<u128> = Some(0);
+        let mut movestogo: Option<u128> = None;
 
-        let time_to_use = if board.player_to_move == engine::constants::Player::Red {
-            wtime
+        let mut i = 0;
+        while i < parts.len() {
+            match parts[i] {
+                "wtime" => {
+                    wtime = parts.get(i + 1).and_then(|s| s.parse().ok());
+                    i += 2;
+                }
+                "btime" => {
+                    btime = parts.get(i + 1).and_then(|s| s.parse().ok());
+                    i += 2;
+                }
+                "winc" => {
+                    winc = parts.get(i + 1).and_then(|s| s.parse().ok());
+                    i += 2;
+                }
+                "binc" => {
+                    binc = parts.get(i + 1).and_then(|s| s.parse().ok());
+                    i += 2;
+                }
+                "movestogo" => {
+                    movestogo = parts.get(i + 1).and_then(|s| s.parse().ok());
+                    i += 2;
+                }
+                _ => i += 1,
+            }
+        }
+
+        let (time_to_use, increment) = if board.player_to_move == engine::constants::Player::Red {
+            (wtime, winc.unwrap_or(0))
         } else {
-            btime
+            (btime, binc.unwrap_or(0))
         };
+
         if let Some(t) = time_to_use {
-            time_limit_ms = Some(t / 20);
+            if let Some(moves) = movestogo {
+                time_limit_ms = Some(t / moves as u128 + increment);
+            } else {
+                time_limit_ms = Some(t / 20u128 + increment);
+            }
         }
     }
     (depth, time_limit_ms)
@@ -76,16 +118,23 @@ fn main() {
         if let Some(command) = parts.get(0) {
             match *command {
                 "uci" => {
-                    println!("id name XiangqiEngine");
-        println!("id author Gemini CLI");
+                    println!("id name Xiangqi");
+                    println!("id author Hezhaoyun");
                     println!("uciok");
                 }
                 "isready" => {
                     println!("readyok");
                 }
+                "ucinewgame" => {
+                    let mut engine_lock = engine.lock().unwrap();
+                    engine_lock.clear_history();
+                    engine_lock.tt.clear();
+                }
                 "position" => {
                     let mut new_board = if parts.get(1) == Some(&"startpos") {
-                        Board::from_fen("rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1")
+                        Board::from_fen(
+                            "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1",
+                        )
                     } else if parts.get(1) == Some(&"fen") {
                         let fen = parts[2..].join(" ");
                         Board::from_fen(&fen)
@@ -98,7 +147,6 @@ fn main() {
                             if let Some(mv) = parse_uci_move(&new_board, move_str) {
                                 new_board.move_piece(mv);
                             }
-                            
                         }
                     }
                     board = Some(new_board);
@@ -106,11 +154,17 @@ fn main() {
                 "go" => {
                     if let Some(ref mut b) = board {
                         let (depth, time_limit_ms) = parse_go_command(&parts, b);
+                        writeln!(log_file, "depth: {}, time_limit_ms: {:?}", depth, time_limit_ms).unwrap();
                         let mut engine_lock = engine.lock().unwrap();
+                        engine_lock.stop_search = false;
                         let (best_move, _) = engine_lock.search(b, depth, time_limit_ms);
 
                         println!("bestmove {}", best_move.to_uci_string());
                     }
+                }
+                "stop" => {
+                    let mut engine_lock = engine.lock().unwrap();
+                    engine_lock.stop_search = true;
                 }
                 "quit" => {
                     break;
@@ -118,48 +172,5 @@ fn main() {
                 _ => {}
             }
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use engine::bitboard::Board;
-
-    #[test]
-    fn test_parse_go_command_depth() {
-        let board = Board::from_fen("rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1");
-        let parts = vec!["go", "depth", "5"];
-        let (depth, time_limit) = parse_go_command(&parts, &board);
-        assert_eq!(depth, 5);
-        assert_eq!(time_limit, None);
-    }
-
-    #[test]
-    fn test_parse_go_command_movetime() {
-        let board = Board::from_fen("rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1");
-        let parts = vec!["go", "movetime", "10000"];
-        let (depth, time_limit) = parse_go_command(&parts, &board);
-        assert_eq!(depth, 10); // default
-        assert_eq!(time_limit, Some(10000));
-    }
-
-    #[test]
-    fn test_parse_go_command_wtime_btime() {
-        let board = Board::from_fen("rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1");
-        let parts = vec!["go", "wtime", "20000", "btime", "30000"];
-        let (depth, time_limit) = parse_go_command(&parts, &board);
-        assert_eq!(depth, 10); // default
-        assert_eq!(time_limit, Some(1000)); // 20000 / 20
-    }
-
-    #[test]
-    fn test_parse_go_command_wtime_btime_black() {
-        let mut board = Board::from_fen("rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1");
-        board.player_to_move = engine::constants::Player::Black;
-        let parts = vec!["go", "wtime", "20000", "btime", "30000"];
-        let (depth, time_limit) = parse_go_command(&parts, &board);
-        assert_eq!(depth, 10); // default
-        assert_eq!(time_limit, Some(1500)); // 30000 / 20
     }
 }

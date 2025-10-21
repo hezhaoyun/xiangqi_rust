@@ -367,7 +367,7 @@ impl XiangqiApp {
             async move {
                 let mut uci_stdin = uci_stdin.lock().unwrap();
                 writeln!(uci_stdin, "position fen {}", board_fen).ok();
-                writeln!(uci_stdin, "go").ok();
+                writeln!(uci_stdin, "go movetime 3000").ok();
             },
             |_| Message::UciResponse("".to_string()), // We get the response via subscription
         )

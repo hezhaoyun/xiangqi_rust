@@ -10,5 +10,5 @@ crossterm = "0.27.0"
 engine = { path = "../engine" }
 
 [[bin]]
-name = "xiangqi_gui"
+name = "gui"
 path = "src/main.rs"
