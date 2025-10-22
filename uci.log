@@ -1,6 +1,0 @@
-Received: uci
-Received: isready
-Received: position fen rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C2C4/9/RNBAKABNR b - - 0 1
-Received: go movetime 3000
-Received: position fen rnbakabnr/9/1c7/p1p1p1pcp/9/9/P1P1P1P1P/1C2C1N2/9/RNBAKAB1R b - - 0 1
-Received: go movetime 3000
