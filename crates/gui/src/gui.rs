@@ -537,8 +537,8 @@ impl BoardCanvas {
             let text_widget = canvas::Text {
                 content: text.to_string(),
                 position: Point::new(x, y),
-                color: iced::Color::from_rgb8(0, 0, 0),
-                size: Pixels(SQUARE_SIZE * 0.8),
+                color: iced::Color::from_rgb8(100, 100, 100),
+                size: Pixels(SQUARE_SIZE * 0.6),
                 font: CHINESE_FONT,
                 horizontal_alignment: iced::alignment::Horizontal::Center,
                 vertical_alignment: iced::alignment::Vertical::Center,
@@ -548,9 +548,9 @@ impl BoardCanvas {
             frame.fill_text(text_widget);
         };
 
-        // Place "楚河" and "漢界"
-        river_text(frame, "漢界", 2.0 * SQUARE_SIZE, 5.4 * SQUARE_SIZE - SQUARE_SIZE * 0.4);
-        river_text(frame, "楚河", 7.0 * SQUARE_SIZE, 5.4 * SQUARE_SIZE - SQUARE_SIZE * 0.4);
+        // Place "楚河" and "漢界" on their respective sides of the river
+        river_text(frame, "漢界", 2.0 * SQUARE_SIZE, 5.0 * SQUARE_SIZE);
+        river_text(frame, "楚河", 7.0 * SQUARE_SIZE, 5.0 * SQUARE_SIZE);
 
         // Palace diagonal lines
         let palace_path = |frame: &mut Frame, x1, y1, x2, y2| {
