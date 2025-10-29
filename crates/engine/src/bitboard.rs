@@ -30,6 +30,12 @@ pub const RANK_MASKS: [Bitboard; 10] = {
     masks
 };
 
+pub enum MoveGenType {
+    All,
+    Captures,
+    Quiets,
+}
+
 /// Represents the state of the Xiangqi board at any point in time.
 #[derive(Debug, Clone)]
 pub struct Board {
@@ -158,50 +164,9 @@ impl Board {
         let moving_piece = self.board[from_sq];
         let captured_piece = self.board[to_sq];
 
-        // --- Incremental Score Update (Remove moving piece from from_sq) ---
-        let (mg_from, eg_from) = crate::evaluate::get_pst_scores(moving_piece, from_sq);
-        self.mg_pst_score -= mg_from;
-        self.eg_pst_score -= eg_from;
-
-        let r_from = from_sq / 9;
-        let c_from = from_sq % 9;
-        let r_to = to_sq / 9;
-        let c_to = to_sq % 9;
-
-        self.board[from_sq] = Piece::Empty;
-        self.board[to_sq] = moving_piece;
-
-        let moving_z_idx = moving_piece.get_zobrist_idx().unwrap();
-        self.hash_key ^= zobrist::ZOBRIST_KEYS[moving_z_idx][r_from][c_from];
-        self.hash_key ^= zobrist::ZOBRIST_KEYS[moving_z_idx][r_to][c_to];
-
-        let move_mask = SQUARE_MASKS[from_sq] | SQUARE_MASKS[to_sq];
-        self.piece_bitboards[moving_piece.get_bb_index().unwrap()] ^= move_mask;
-        self.color_bitboards[self.player_to_move.get_bb_idx()] ^= move_mask;
-
-        if captured_piece != Piece::Empty {
-            // --- Incremental Score Update (Capture) ---
-            let captured_value = crate::evaluate::MATERIAL_VALUES[captured_piece.abs_val() as usize];
-            if captured_piece.player().unwrap() == Player::Black {
-                self.material_score += captured_value;
-            } else {
-                self.material_score -= captured_value;
-            }
-            let (mg_cap, eg_cap) = crate::evaluate::get_pst_scores(captured_piece, to_sq);
-            self.mg_pst_score -= mg_cap;
-            self.eg_pst_score -= eg_cap;
-
-            let captured_z_idx = captured_piece.get_zobrist_idx().unwrap();
-            self.hash_key ^= zobrist::ZOBRIST_KEYS[captured_z_idx][r_to][c_to];
-            let captured_player = captured_piece.player().unwrap();
-            self.piece_bitboards[captured_piece.get_bb_index().unwrap()] &= !SQUARE_MASKS[to_sq];
-            self.color_bitboards[captured_player.get_bb_idx()] &= !SQUARE_MASKS[to_sq];
-        }
-
-        // --- Incremental Score Update (Add moving piece to to_sq) ---
-        let (mg_to, eg_to) = crate::evaluate::get_pst_scores(moving_piece, to_sq);
-        self.mg_pst_score += mg_to;
-        self.eg_pst_score += eg_to;
+        self.update_scores_for_move(moving_piece, captured_piece, from_sq, to_sq);
+        self.update_board_and_bitboards_for_move(moving_piece, captured_piece, from_sq, to_sq);
+        self.update_hash_for_move(moving_piece, captured_piece, from_sq, to_sq);
 
         self.player_to_move = self.player_to_move.opponent();
         self.hash_key ^= zobrist::ZOBRIST_PLAYER;
@@ -218,36 +183,77 @@ impl Board {
         let to_sq = mv.to_sq();
         let moving_piece = self.board[to_sq];
 
+        self.player_to_move = self.player_to_move.opponent();
+        self.hash_key ^= zobrist::ZOBRIST_PLAYER;
+
+        self.update_scores_for_unmove(moving_piece, captured_piece, from_sq, to_sq);
+        self.update_board_and_bitboards_for_unmove(moving_piece, captured_piece, from_sq, to_sq);
+        self.update_hash_for_unmove(moving_piece, captured_piece, from_sq, to_sq);
+    }
+
+    fn update_scores_for_move(&mut self, moving_piece: Piece, captured_piece: Piece, from_sq: usize, to_sq: usize) {
+        let (mg_from, eg_from) = crate::evaluate::get_pst_scores(moving_piece, from_sq);
+        self.mg_pst_score -= mg_from;
+        self.eg_pst_score -= eg_from;
+
+        if captured_piece != Piece::Empty {
+            let captured_value = crate::evaluate::MATERIAL_VALUES[captured_piece.abs_val() as usize];
+            if captured_piece.player().unwrap() == Player::Black {
+                self.material_score += captured_value;
+            } else {
+                self.material_score -= captured_value;
+            }
+            let (mg_cap, eg_cap) = crate::evaluate::get_pst_scores(captured_piece, to_sq);
+            self.mg_pst_score -= mg_cap;
+            self.eg_pst_score -= eg_cap;
+        }
+
+        let (mg_to, eg_to) = crate::evaluate::get_pst_scores(moving_piece, to_sq);
+        self.mg_pst_score += mg_to;
+        self.eg_pst_score += eg_to;
+    }
+
+    fn update_board_and_bitboards_for_move(&mut self, moving_piece: Piece, captured_piece: Piece, from_sq: usize, to_sq: usize) {
+        self.board[from_sq] = Piece::Empty;
+        self.board[to_sq] = moving_piece;
+
+        let move_mask = SQUARE_MASKS[from_sq] | SQUARE_MASKS[to_sq];
+        self.piece_bitboards[moving_piece.get_bb_index().unwrap()] ^= move_mask;
+        self.color_bitboards[self.player_to_move.get_bb_idx()] ^= move_mask;
+
+        if captured_piece != Piece::Empty {
+            let captured_player = captured_piece.player().unwrap();
+            self.piece_bitboards[captured_piece.get_bb_index().unwrap()] &= !SQUARE_MASKS[to_sq];
+            self.color_bitboards[captured_player.get_bb_idx()] &= !SQUARE_MASKS[to_sq];
+        }
+    }
+
+    fn update_hash_for_move(&mut self, moving_piece: Piece, captured_piece: Piece, from_sq: usize, to_sq: usize) {
         let r_from = from_sq / 9;
         let c_from = from_sq % 9;
         let r_to = to_sq / 9;
         let c_to = to_sq % 9;
 
-        self.player_to_move = self.player_to_move.opponent();
-        self.hash_key ^= zobrist::ZOBRIST_PLAYER;
-
-        // --- Incremental Score Update (Remove moving piece from to_sq) ---
-        let (mg_to, eg_to) = crate::evaluate::get_pst_scores(moving_piece, to_sq);
-        self.mg_pst_score -= mg_to;
-        self.eg_pst_score -= eg_to;
-
-        self.board[from_sq] = moving_piece;
-        self.board[to_sq] = captured_piece;
-
-        let move_mask = SQUARE_MASKS[from_sq] | SQUARE_MASKS[to_sq];
-        self.piece_bitboards[moving_piece.get_bb_index().unwrap()] ^= move_mask;
-        self.color_bitboards[moving_piece.player().unwrap().get_bb_idx()] ^= move_mask;
         let moving_z_idx = moving_piece.get_zobrist_idx().unwrap();
         self.hash_key ^= zobrist::ZOBRIST_KEYS[moving_z_idx][r_from][c_from];
         self.hash_key ^= zobrist::ZOBRIST_KEYS[moving_z_idx][r_to][c_to];
 
-        // --- Incremental Score Update (Add moving piece to from_sq) ---
+        if captured_piece != Piece::Empty {
+            let captured_z_idx = captured_piece.get_zobrist_idx().unwrap();
+            self.hash_key ^= zobrist::ZOBRIST_KEYS[captured_z_idx][r_to][c_to];
+        }
+    }
+
+    fn update_scores_for_unmove(&mut self, moving_piece: Piece, captured_piece: Piece, from_sq: usize, to_sq: usize) {
+        let (mg_to, eg_to) = crate::evaluate::get_pst_scores(moving_piece, to_sq);
+        self.mg_pst_score -= mg_to;
+        self.eg_pst_score -= eg_to;
+
         let (mg_from, eg_from) = crate::evaluate::get_pst_scores(moving_piece, from_sq);
         self.mg_pst_score += mg_from;
         self.eg_pst_score += eg_from;
 
         if captured_piece != Piece::Empty {
-            // --- Incremental Score Update (Restore captured piece) ---
             let captured_value = crate::evaluate::MATERIAL_VALUES[captured_piece.abs_val() as usize];
             if captured_piece.player().unwrap() == Player::Black {
                 self.material_score -= captured_value;
@@ -257,10 +263,35 @@ impl Board {
             let (mg_cap, eg_cap) = crate::evaluate::get_pst_scores(captured_piece, to_sq);
             self.mg_pst_score += mg_cap;
             self.eg_pst_score += eg_cap;
+        }
+    }
 
+    fn update_board_and_bitboards_for_unmove(&mut self, moving_piece: Piece, captured_piece: Piece, from_sq: usize, to_sq: usize) {
+        self.board[from_sq] = moving_piece;
+        self.board[to_sq] = captured_piece;
+
+        let move_mask = SQUARE_MASKS[from_sq] | SQUARE_MASKS[to_sq];
+        self.piece_bitboards[moving_piece.get_bb_index().unwrap()] ^= move_mask;
+        self.color_bitboards[moving_piece.player().unwrap().get_bb_idx()] ^= move_mask;
+
+        if captured_piece != Piece::Empty {
             let captured_player = captured_piece.player().unwrap();
             self.piece_bitboards[captured_piece.get_bb_index().unwrap()] |= SQUARE_MASKS[to_sq];
             self.color_bitboards[captured_player.get_bb_idx()] |= SQUARE_MASKS[to_sq];
+        }
+    }
+
+    fn update_hash_for_unmove(&mut self, moving_piece: Piece, captured_piece: Piece, from_sq: usize, to_sq: usize) {
+        let r_from = from_sq / 9;
+        let c_from = from_sq % 9;
+        let r_to = to_sq / 9;
+        let c_to = to_sq % 9;
+
+        let moving_z_idx = moving_piece.get_zobrist_idx().unwrap();
+        self.hash_key ^= zobrist::ZOBRIST_KEYS[moving_z_idx][r_from][c_from];
+        self.hash_key ^= zobrist::ZOBRIST_KEYS[moving_z_idx][r_to][c_to];
+
+        if captured_piece != Piece::Empty {
             let captured_z_idx = captured_piece.get_zobrist_idx().unwrap();
             self.hash_key ^= zobrist::ZOBRIST_KEYS[captured_z_idx][r_to][c_to];
         }
@@ -268,7 +299,16 @@ impl Board {
 
     /// Generates all pseudo-legal capture moves for the current player.
     pub fn generate_capture_moves(&self) -> Vec<crate::r#move::Move> {
-        let mut moves = Vec::with_capacity(32);
+        self.generate_moves(MoveGenType::Captures)
+    }
+
+    /// Generates all pseudo-legal quiet (non-capture) moves for the current player.
+    pub fn generate_quiet_moves(&self) -> Vec<crate::r#move::Move> {
+        self.generate_moves(MoveGenType::Quiets)
+    }
+
+    fn generate_moves(&self, move_gen_type: MoveGenType) -> Vec<crate::r#move::Move> {
+        let mut moves = Vec::with_capacity(64);
         let player_idx = self.player_to_move.get_bb_idx();
         let own_pieces_bb = self.color_bitboards[player_idx];
         let opponent_pieces_bb = self.color_bitboards[1 - player_idx];
@@ -289,68 +329,19 @@ impl Board {
 
             while piece_bb != 0 {
                 let from_sq = piece_bb.trailing_zeros() as usize;
-                let mut moves_bb: Bitboard = 0;
+                let moves_bb = self.get_piece_moves(piece_type, from_sq, occupied, player_idx);
 
-                match piece_type {
-                    Piece::RKing | Piece::BKing => {
-                        moves_bb = crate::move_gen::ATTACK_TABLES.king[from_sq]
+                match move_gen_type {
+                    MoveGenType::All => {
+                        self.add_moves(&mut moves, from_sq, moves_bb & opponent_pieces_bb, true);
+                        self.add_moves(&mut moves, from_sq, moves_bb & !occupied, false);
                     }
-                    Piece::RGuard | Piece::BGuard => {
-                        moves_bb = crate::move_gen::ATTACK_TABLES.guard[from_sq]
+                    MoveGenType::Captures => {
+                        self.add_moves(&mut moves, from_sq, moves_bb & opponent_pieces_bb, true);
                     }
-                    Piece::RBishop => {
-                        let mut potential_moves = crate::move_gen::ATTACK_TABLES.bishop[from_sq];
-                        potential_moves &= crate::move_gen::ATTACK_TABLES.red_half_mask;
-                        while potential_moves != 0 {
-                            let to_sq = potential_moves.trailing_zeros() as usize;
-                            let leg_sq = crate::move_gen::ATTACK_TABLES.bishop_legs[from_sq][to_sq];
-                            if (occupied & SQUARE_MASKS[leg_sq]) == 0 { moves_bb |= SQUARE_MASKS[to_sq]; }
-                            potential_moves &= !SQUARE_MASKS[to_sq];
-                        }
+                    MoveGenType::Quiets => {
+                        self.add_moves(&mut moves, from_sq, moves_bb & !occupied, false);
                     }
-                    Piece::BBishop => {
-                        let mut potential_moves = crate::move_gen::ATTACK_TABLES.bishop[from_sq];
-                        potential_moves &= crate::move_gen::ATTACK_TABLES.black_half_mask;
-                        while potential_moves != 0 {
-                            let to_sq = potential_moves.trailing_zeros() as usize;
-                            let leg_sq = crate::move_gen::ATTACK_TABLES.bishop_legs[from_sq][to_sq];
-                            if (occupied & SQUARE_MASKS[leg_sq]) == 0 { moves_bb |= SQUARE_MASKS[to_sq]; }
-                            potential_moves &= !SQUARE_MASKS[to_sq];
-                        }
-                    }
-                    Piece::RHorse | Piece::BHorse => {
-                        let mut potential_moves = crate::move_gen::ATTACK_TABLES.horse[from_sq];
-                        while potential_moves != 0 {
-                            let to_sq = potential_moves.trailing_zeros() as usize;
-                            let leg_sq = crate::move_gen::ATTACK_TABLES.horse_legs[from_sq][to_sq];
-                            if (occupied & SQUARE_MASKS[leg_sq]) == 0 {
-                                moves_bb |= SQUARE_MASKS[to_sq];
-                            }
-                            potential_moves &= !SQUARE_MASKS[to_sq];
-                        }
-                    }
-                    Piece::RPawn | Piece::BPawn => {
-                        moves_bb = crate::move_gen::ATTACK_TABLES.pawn[player_idx][from_sq]
-                    }
-                    Piece::RRook | Piece::BRook => {
-                        moves_bb = crate::move_gen::get_rook_moves_bb(from_sq, occupied)
-                    }
-                    Piece::RCannon | Piece::BCannon => {
-                        moves_bb = crate::move_gen::get_cannon_moves_bb(from_sq, occupied)
-                    }
-                    _ => {}
-                }
-
-                let mut capture_moves_bb = moves_bb & opponent_pieces_bb;
-
-                while capture_moves_bb != 0 {
-                    let to_sq = capture_moves_bb.trailing_zeros() as usize;
-                    moves.push(crate::r#move::Move::new(
-                        from_sq,
-                        to_sq,
-                        Some(self.board[to_sq]),
-                    ));
-                    capture_moves_bb &= !SQUARE_MASKS[to_sq];
                 }
 
                 piece_bb &= !SQUARE_MASKS[from_sq];
@@ -359,98 +350,64 @@ impl Board {
         moves
     }
 
-    /// Generates all pseudo-legal quiet (non-capture) moves for the current player.
-    pub fn generate_quiet_moves(&self) -> Vec<crate::r#move::Move> {
-        let mut moves = Vec::with_capacity(64);
-        let player_idx = self.player_to_move.get_bb_idx();
-        let own_pieces_bb = self.color_bitboards[player_idx];
-        let opponent_pieces_bb = self.color_bitboards[1 - player_idx];
-        let occupied = own_pieces_bb | opponent_pieces_bb;
-        let empty_squares = !occupied;
-
-        let (piece_start_idx, piece_end_idx) = if self.player_to_move == Player::Red {
-            (0, 7)
-        } else {
-            (7, 14)
-        };
-
-        for i in piece_start_idx..piece_end_idx {
-            let mut piece_bb = self.piece_bitboards[i];
-            if piece_bb == 0 {
-                continue;
-            }
-            let piece_type = self.board[piece_bb.trailing_zeros() as usize];
-
-            while piece_bb != 0 {
-                let from_sq = piece_bb.trailing_zeros() as usize;
-                let mut moves_bb: Bitboard = 0;
-
-                match piece_type {
-                    Piece::RKing | Piece::BKing => {
-                        moves_bb = crate::move_gen::ATTACK_TABLES.king[from_sq]
-                    }
-                    Piece::RGuard | Piece::BGuard => {
-                        moves_bb = crate::move_gen::ATTACK_TABLES.guard[from_sq]
-                    }
-                    Piece::RBishop => {
-                        let mut potential_moves = crate::move_gen::ATTACK_TABLES.bishop[from_sq];
-                        potential_moves &= crate::move_gen::ATTACK_TABLES.red_half_mask;
-                        while potential_moves != 0 {
-                            let to_sq = potential_moves.trailing_zeros() as usize;
-                            let leg_sq = crate::move_gen::ATTACK_TABLES.bishop_legs[from_sq][to_sq];
-                            if (occupied & SQUARE_MASKS[leg_sq]) == 0 { moves_bb |= SQUARE_MASKS[to_sq]; }
-                            potential_moves &= !SQUARE_MASKS[to_sq];
-                        }
-                    }
-                    Piece::BBishop => {
-                        let mut potential_moves = crate::move_gen::ATTACK_TABLES.bishop[from_sq];
-                        potential_moves &= crate::move_gen::ATTACK_TABLES.black_half_mask;
-                        while potential_moves != 0 {
-                            let to_sq = potential_moves.trailing_zeros() as usize;
-                            let leg_sq = crate::move_gen::ATTACK_TABLES.bishop_legs[from_sq][to_sq];
-                            if (occupied & SQUARE_MASKS[leg_sq]) == 0 { moves_bb |= SQUARE_MASKS[to_sq]; }
-                            potential_moves &= !SQUARE_MASKS[to_sq];
-                        }
-                    }
-                    Piece::RHorse | Piece::BHorse => {
-                        let mut potential_moves = crate::move_gen::ATTACK_TABLES.horse[from_sq];
-                        while potential_moves != 0 {
-                            let to_sq = potential_moves.trailing_zeros() as usize;
-                            let leg_sq = crate::move_gen::ATTACK_TABLES.horse_legs[from_sq][to_sq];
-                            if (occupied & SQUARE_MASKS[leg_sq]) == 0 {
-                                moves_bb |= SQUARE_MASKS[to_sq];
-                            }
-                            potential_moves &= !SQUARE_MASKS[to_sq];
-                        }
-                    }
-                    Piece::RPawn | Piece::BPawn => {
-                        moves_bb = crate::move_gen::ATTACK_TABLES.pawn[player_idx][from_sq]
-                    }
-                    Piece::RRook | Piece::BRook => {
-                        moves_bb = crate::move_gen::get_rook_moves_bb(from_sq, occupied)
-                    }
-                    Piece::RCannon | Piece::BCannon => {
-                        moves_bb = crate::move_gen::get_cannon_moves_bb(from_sq, occupied)
-                    }
-                    _ => {}
+    fn get_piece_moves(&self, piece_type: Piece, from_sq: usize, occupied: Bitboard, player_idx: usize) -> Bitboard {
+        match piece_type {
+            Piece::RKing | Piece::BKing => crate::move_gen::ATTACK_TABLES.king[from_sq],
+            Piece::RGuard | Piece::BGuard => crate::move_gen::ATTACK_TABLES.guard[from_sq],
+            Piece::RBishop => {
+                let mut moves_bb = 0;
+                let mut potential_moves = crate::move_gen::ATTACK_TABLES.bishop[from_sq];
+                potential_moves &= crate::move_gen::ATTACK_TABLES.red_half_mask;
+                while potential_moves != 0 {
+                    let to_sq = potential_moves.trailing_zeros() as usize;
+                    let leg_sq = crate::move_gen::ATTACK_TABLES.bishop_legs[from_sq][to_sq];
+                    if (occupied & SQUARE_MASKS[leg_sq]) == 0 { moves_bb |= SQUARE_MASKS[to_sq]; }
+                    potential_moves &= !SQUARE_MASKS[to_sq];
                 }
-
-                let mut quiet_moves_bb = moves_bb & empty_squares;
-
-                while quiet_moves_bb != 0 {
-                    let to_sq = quiet_moves_bb.trailing_zeros() as usize;
-                    moves.push(crate::r#move::Move::new(
-                        from_sq,
-                        to_sq,
-                        None,
-                    ));
-                    quiet_moves_bb &= !SQUARE_MASKS[to_sq];
-                }
-
-                piece_bb &= !SQUARE_MASKS[from_sq];
+                moves_bb
             }
+            Piece::BBishop => {
+                let mut moves_bb = 0;
+                let mut potential_moves = crate::move_gen::ATTACK_TABLES.bishop[from_sq];
+                potential_moves &= crate::move_gen::ATTACK_TABLES.black_half_mask;
+                while potential_moves != 0 {
+                    let to_sq = potential_moves.trailing_zeros() as usize;
+                    let leg_sq = crate::move_gen::ATTACK_TABLES.bishop_legs[from_sq][to_sq];
+                    if (occupied & SQUARE_MASKS[leg_sq]) == 0 { moves_bb |= SQUARE_MASKS[to_sq]; }
+                    potential_moves &= !SQUARE_MASKS[to_sq];
+                }
+                moves_bb
+            }
+            Piece::RHorse | Piece::BHorse => {
+                let mut moves_bb = 0;
+                let mut potential_moves = crate::move_gen::ATTACK_TABLES.horse[from_sq];
+                while potential_moves != 0 {
+                    let to_sq = potential_moves.trailing_zeros() as usize;
+                    let leg_sq = crate::move_gen::ATTACK_TABLES.horse_legs[from_sq][to_sq];
+                    if (occupied & SQUARE_MASKS[leg_sq]) == 0 {
+                        moves_bb |= SQUARE_MASKS[to_sq];
+                    }
+                    potential_moves &= !SQUARE_MASKS[to_sq];
+                }
+                moves_bb
+            }
+            Piece::RPawn | Piece::BPawn => crate::move_gen::ATTACK_TABLES.pawn[player_idx][from_sq],
+            Piece::RRook | Piece::BRook => crate::move_gen::get_rook_moves_bb(from_sq, occupied),
+            Piece::RCannon | Piece::BCannon => crate::move_gen::get_cannon_moves_bb(from_sq, occupied),
+            _ => 0,
         }
-        moves
+    }
+
+    fn add_moves(&self, moves: &mut Vec<crate::r#move::Move>, from_sq: usize, mut moves_bb: Bitboard, is_capture: bool) {
+        while moves_bb != 0 {
+            let to_sq = moves_bb.trailing_zeros() as usize;
+            moves.push(crate::r#move::Move::new(
+                from_sq,
+                to_sq,
+                if is_capture { Some(self.board[to_sq]) } else { None },
+            ));
+            moves_bb &= !SQUARE_MASKS[to_sq];
+        }
     }
 
     pub fn generate_legal_moves(&mut self) -> Vec<crate::r#move::Move> {

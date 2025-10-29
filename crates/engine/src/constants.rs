@@ -52,6 +52,10 @@ impl Piece {
         PIECE_VALUES[ (self as i8).abs() as usize ]
     }
 
+    pub fn is_major(self) -> bool {
+        matches!(self, Piece::RRook | Piece::BRook | Piece::RHorse | Piece::BHorse | Piece::RCannon | Piece::BCannon)
+    }
+
     /// Get the player associated with a piece.
     /// Returns `None` if the piece is `Empty`.
     pub fn player(self) -> Option<Player> {

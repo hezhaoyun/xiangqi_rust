@@ -8,6 +8,14 @@ pub const fn sq_to_idx(r: usize, c: usize) -> usize { r * 9 + c }
 const fn is_valid(r: isize, c: isize) -> bool { r >= 0 && r < 10 && c >= 0 && c < 9 }
 
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Direction {
+    North,
+    East,
+    South,
+    West,
+}
+
 /// A struct to hold all the pre-computed attack tables.
 /// The tables are initialized once and then accessed globally.
 pub struct AttackTables {
@@ -38,7 +46,16 @@ impl AttackTables {
             black_half_mask: 0,
         };
 
-        // Precompute King and Guard attacks
+        tables.precompute_king_and_guard_attacks();
+        tables.precompute_bishop_and_horse_attacks();
+        tables.precompute_pawn_attacks();
+        tables.precompute_rays();
+        tables.precompute_side_masks();
+
+        tables
+    }
+
+    fn precompute_king_and_guard_attacks(&mut self) {
         for r in 0..10 {
             for c in 0..9 {
                 let sq = sq_to_idx(r, c);
@@ -46,20 +63,21 @@ impl AttackTables {
                 for (dr, dc) in [(0, 1), (0, -1), (1, 0), (-1, 0)] {
                     let (nr, nc) = (r as isize + dr, c as isize + dc);
                     if nc >= 3 && nc <= 5 && ((nr >= 0 && nr <= 2) || (nr >= 7 && nr <= 9)) {
-                        tables.king[sq] |= SQUARE_MASKS[sq_to_idx(nr as usize, nc as usize)];
+                        self.king[sq] |= SQUARE_MASKS[sq_to_idx(nr as usize, nc as usize)];
                     }
                 }
                 // Guard
                 for (dr, dc) in [(1, 1), (1, -1), (-1, 1), (-1, -1)] {
                     let (nr, nc) = (r as isize + dr, c as isize + dc);
                     if nc >= 3 && nc <= 5 && ((nr >= 0 && nr <= 2) || (nr >= 7 && nr <= 9)) {
-                        tables.guard[sq] |= SQUARE_MASKS[sq_to_idx(nr as usize, nc as usize)];
+                        self.guard[sq] |= SQUARE_MASKS[sq_to_idx(nr as usize, nc as usize)];
                     }
                 }
             }
         }
+    }
 
-        // Precompute Bishop and Horse attacks
+    fn precompute_bishop_and_horse_attacks(&mut self) {
         for r in 0..10 {
             for c in 0..9 {
                 let from_sq = sq_to_idx(r, c);
@@ -68,9 +86,9 @@ impl AttackTables {
                     let (nr, nc) = (r as isize + dr, c as isize + dc);
                     if is_valid(nr, nc) {
                         let to_sq = sq_to_idx(nr as usize, nc as usize);
-                        tables.bishop[from_sq] |= SQUARE_MASKS[to_sq];
+                        self.bishop[from_sq] |= SQUARE_MASKS[to_sq];
                         let leg_sq = sq_to_idx((r as isize + dr / 2) as usize, (c as isize + dc / 2) as usize);
-                        tables.bishop_legs[from_sq][to_sq] = leg_sq;
+                        self.bishop_legs[from_sq][to_sq] = leg_sq;
                     }
                 }
                 // Horse
@@ -78,47 +96,48 @@ impl AttackTables {
                     let (nr, nc) = (r as isize + dr, c as isize + dc);
                     if is_valid(nr, nc) {
                         let to_sq = sq_to_idx(nr as usize, nc as usize);
-                        tables.horse[from_sq] |= SQUARE_MASKS[to_sq];
+                        self.horse[from_sq] |= SQUARE_MASKS[to_sq];
                         let (leg_r, leg_c) = if dr.abs() == 2 { (r as isize + dr/2, c as isize) } else { (r as isize, c as isize + dc/2) };
-                        tables.horse_legs[from_sq][to_sq] = sq_to_idx(leg_r as usize, leg_c as usize);
+                        self.horse_legs[from_sq][to_sq] = sq_to_idx(leg_r as usize, leg_c as usize);
                     }
                 }
             }
         }
+    }
 
-        // Precompute Pawn attacks
+    fn precompute_pawn_attacks(&mut self) {
         for r in 0..10 {
             for c in 0..9 {
                 let sq = sq_to_idx(r, c);
                 // Red Pawn (player_idx 0)
-                if is_valid(r as isize - 1, c as isize) { tables.pawn[0][sq] |= SQUARE_MASKS[sq_to_idx(r - 1, c)]; }
+                if is_valid(r as isize - 1, c as isize) { self.pawn[0][sq] |= SQUARE_MASKS[sq_to_idx(r - 1, c)]; }
                 if r < 5 { // Crossed river
-                    if is_valid(r as isize, c as isize - 1) { tables.pawn[0][sq] |= SQUARE_MASKS[sq_to_idx(r, c - 1)]; }
-                    if is_valid(r as isize, c as isize + 1) { tables.pawn[0][sq] |= SQUARE_MASKS[sq_to_idx(r, c + 1)]; }
+                    if is_valid(r as isize, c as isize - 1) { self.pawn[0][sq] |= SQUARE_MASKS[sq_to_idx(r, c - 1)]; }
+                    if is_valid(r as isize, c as isize + 1) { self.pawn[0][sq] |= SQUARE_MASKS[sq_to_idx(r, c + 1)]; }
                 }
                 // Black Pawn (player_idx 1)
-                if is_valid(r as isize + 1, c as isize) { tables.pawn[1][sq] |= SQUARE_MASKS[sq_to_idx(r + 1, c)]; }
+                if is_valid(r as isize + 1, c as isize) { self.pawn[1][sq] |= SQUARE_MASKS[sq_to_idx(r + 1, c)]; }
                 if r > 4 { // Crossed river
-                    if is_valid(r as isize, c as isize - 1) { tables.pawn[1][sq] |= SQUARE_MASKS[sq_to_idx(r, c - 1)]; }
-                    if is_valid(r as isize, c as isize + 1) { tables.pawn[1][sq] |= SQUARE_MASKS[sq_to_idx(r, c + 1)]; }
+                    if is_valid(r as isize, c as isize - 1) { self.pawn[1][sq] |= SQUARE_MASKS[sq_to_idx(r, c - 1)]; }
+                    if is_valid(r as isize, c as isize + 1) { self.pawn[1][sq] |= SQUARE_MASKS[sq_to_idx(r, c + 1)]; }
                 }
             }
         }
+    }
 
-        // Precompute Rays for sliding pieces
+    fn precompute_rays(&mut self) {
         for sq in 0..90 {
             let (r, c) = (sq / 9, sq % 9);
-            for i in (0..r).rev() { tables.rays[0][sq] |= SQUARE_MASKS[sq_to_idx(i, c)]; } // North
-            for i in (c + 1)..9 { tables.rays[1][sq] |= SQUARE_MASKS[sq_to_idx(r, i)]; } // East
-            for i in (r + 1)..10 { tables.rays[2][sq] |= SQUARE_MASKS[sq_to_idx(i, c)]; } // South
-            for i in (0..c).rev() { tables.rays[3][sq] |= SQUARE_MASKS[sq_to_idx(r, i)]; } // West
+            for i in (0..r).rev() { self.rays[Direction::North as usize][sq] |= SQUARE_MASKS[sq_to_idx(i, c)]; } // North
+            for i in (c + 1)..9 { self.rays[Direction::East as usize][sq] |= SQUARE_MASKS[sq_to_idx(r, i)]; } // East
+            for i in (r + 1)..10 { self.rays[Direction::South as usize][sq] |= SQUARE_MASKS[sq_to_idx(i, c)]; } // South
+            for i in (0..c).rev() { self.rays[Direction::West as usize][sq] |= SQUARE_MASKS[sq_to_idx(r, i)]; } // West
         }
+    }
 
-        // Precompute side masks
-        for i in 0..45 { tables.black_half_mask |= SQUARE_MASKS[i]; } // Ranks 9-5 (Black's side)
-        for i in 45..90 { tables.red_half_mask |= SQUARE_MASKS[i]; } // Ranks 4-0 (Red's side)
-
-        tables
+    fn precompute_side_masks(&mut self) {
+        for i in 0..45 { self.black_half_mask |= SQUARE_MASKS[i]; } // Ranks 9-5 (Black's side)
+        for i in 45..90 { self.red_half_mask |= SQUARE_MASKS[i]; } // Ranks 4-0 (Red's side)
     }
 }
 
@@ -127,149 +146,107 @@ pub static ATTACK_TABLES: Lazy<AttackTables> = Lazy::new(AttackTables::new);
 
 /// Generates the attack bitboard for a rook on a given square.
 pub fn get_rook_moves_bb(sq: usize, occupied: Bitboard) -> Bitboard {
+    get_sliding_piece_moves(sq, occupied, false)
+}
+
+/// Generates the attack bitboard for a cannon on a given square.
+pub fn get_cannon_moves_bb(sq: usize, occupied: Bitboard) -> Bitboard {
+    get_sliding_piece_moves(sq, occupied, true)
+}
+
+fn get_sliding_piece_moves(sq: usize, occupied: Bitboard, is_cannon: bool) -> Bitboard {
     let mut final_attacks = 0;
 
-    // North
-    let ray = ATTACK_TABLES.rays[0][sq];
-    let blockers = occupied & ray;
-    if blockers != 0 {
-        let first_blocker = 127 - blockers.leading_zeros() as usize;
-        final_attacks |= (ray ^ ATTACK_TABLES.rays[0][first_blocker]) | SQUARE_MASKS[first_blocker];
-    } else {
-        final_attacks |= ray;
-    }
+    for dir in [Direction::North, Direction::East, Direction::South, Direction::West] {
+        let ray = ATTACK_TABLES.rays[dir as usize][sq];
+        let blockers = occupied & ray;
 
-    // East
-    let ray = ATTACK_TABLES.rays[1][sq];
-    let blockers = occupied & ray;
-    if blockers != 0 {
-        let first_blocker = blockers.trailing_zeros() as usize;
-        final_attacks |= (ray ^ ATTACK_TABLES.rays[1][first_blocker]) | SQUARE_MASKS[first_blocker];
-    } else {
-        final_attacks |= ray;
-    }
-
-    // South
-    let ray = ATTACK_TABLES.rays[2][sq];
-    let blockers = occupied & ray;
-    if blockers != 0 {
-        let first_blocker = blockers.trailing_zeros() as usize;
-        final_attacks |= (ray ^ ATTACK_TABLES.rays[2][first_blocker]) | SQUARE_MASKS[first_blocker];
-    } else {
-        final_attacks |= ray;
-    }
-
-    // West
-    let ray = ATTACK_TABLES.rays[3][sq];
-    let blockers = occupied & ray;
-    if blockers != 0 {
-        let first_blocker = 127 - blockers.leading_zeros() as usize;
-        final_attacks |= (ray ^ ATTACK_TABLES.rays[3][first_blocker]) | SQUARE_MASKS[first_blocker];
-    } else {
-        final_attacks |= ray;
+        if !is_cannon {
+            if blockers != 0 {
+                let first_blocker = if dir == Direction::North || dir == Direction::West {
+                    127 - blockers.leading_zeros() as usize
+                } else {
+                    blockers.trailing_zeros() as usize
+                };
+                final_attacks |= (ray ^ ATTACK_TABLES.rays[dir as usize][first_blocker]) | SQUARE_MASKS[first_blocker];
+            } else {
+                final_attacks |= ray;
+            }
+        } else {
+            if blockers != 0 {
+                let screen = if dir == Direction::North || dir == Direction::West {
+                    127 - blockers.leading_zeros() as usize
+                } else {
+                    blockers.trailing_zeros() as usize
+                };
+                final_attacks |= (ray ^ ATTACK_TABLES.rays[dir as usize][screen]) ^ SQUARE_MASKS[screen];
+                let remaining_blockers = blockers ^ SQUARE_MASKS[screen];
+                if remaining_blockers != 0 {
+                    let target = if dir == Direction::North || dir == Direction::West {
+                        127 - remaining_blockers.leading_zeros() as usize
+                    } else {
+                        remaining_blockers.trailing_zeros() as usize
+                    };
+                    final_attacks |= SQUARE_MASKS[target];
+                }
+            } else {
+                final_attacks |= ray;
+            }
+        }
     }
 
     final_attacks
 }
 
-/// Generates the attack bitboard for a cannon on a given square.
-pub fn get_cannon_moves_bb(sq: usize, occupied: Bitboard) -> Bitboard {
-    let mut attacks = 0;
-
-    // North
-    let ray = ATTACK_TABLES.rays[0][sq];
-    let blockers = occupied & ray;
-    if blockers != 0 {
-        let screen = 127 - blockers.leading_zeros() as usize;
-        attacks |= (ray ^ ATTACK_TABLES.rays[0][screen]) ^ SQUARE_MASKS[screen];
-        let remaining_blockers = blockers ^ SQUARE_MASKS[screen];
-        if remaining_blockers != 0 {
-            let target = 127 - remaining_blockers.leading_zeros() as usize;
-            attacks |= SQUARE_MASKS[target];
-        }
-    } else {
-        attacks |= ray;
-    }
-
-    // East
-    let ray = ATTACK_TABLES.rays[1][sq];
-    let blockers = occupied & ray;
-    if blockers != 0 {
-        let screen = blockers.trailing_zeros() as usize;
-        attacks |= (ray ^ ATTACK_TABLES.rays[1][screen]) ^ SQUARE_MASKS[screen];
-        let remaining_blockers = blockers ^ SQUARE_MASKS[screen];
-        if remaining_blockers != 0 {
-            let target = remaining_blockers.trailing_zeros() as usize;
-            attacks |= SQUARE_MASKS[target];
-        }
-    } else {
-        attacks |= ray;
-    }
-
-    // South
-    let ray = ATTACK_TABLES.rays[2][sq];
-    let blockers = occupied & ray;
-    if blockers != 0 {
-        let screen = blockers.trailing_zeros() as usize;
-        attacks |= (ray ^ ATTACK_TABLES.rays[2][screen]) ^ SQUARE_MASKS[screen];
-        let remaining_blockers = blockers ^ SQUARE_MASKS[screen];
-        if remaining_blockers != 0 {
-            let target = remaining_blockers.trailing_zeros() as usize;
-            attacks |= SQUARE_MASKS[target];
-        }
-    } else {
-        attacks |= ray;
-    }
-
-    // West
-    let ray = ATTACK_TABLES.rays[3][sq];
-    let blockers = occupied & ray;
-    if blockers != 0 {
-        let screen = 127 - blockers.leading_zeros() as usize;
-        attacks |= (ray ^ ATTACK_TABLES.rays[3][screen]) ^ SQUARE_MASKS[screen];
-        let remaining_blockers = blockers ^ SQUARE_MASKS[screen];
-        if remaining_blockers != 0 {
-            let target = 127 - remaining_blockers.leading_zeros() as usize;
-            attacks |= SQUARE_MASKS[target];
-        }
-    } else {
-        attacks |= ray;
-    }
-
-    attacks
-}
-
 /// Checks if a given square is attacked by the specified player.
 pub fn is_square_attacked_by(board: &crate::bitboard::Board, sq: usize, attacker_player: crate::constants::Player) -> bool {
-    let occupied = board.occupied_bitboard();
-    let attacker_idx = attacker_player.get_bb_idx();
-    let defender_idx = 1 - attacker_idx;
+    if is_attacked_by_pawn(board, sq, attacker_player) {
+        return true;
+    }
+    if is_attacked_by_king(board, sq, attacker_player) {
+        return true;
+    }
+    if is_attacked_by_horse(board, sq, attacker_player) {
+        return true;
+    }
+    if is_attacked_by_bishop(board, sq, attacker_player) {
+        return true;
+    }
+    if is_attacked_by_rook(board, sq, attacker_player) {
+        return true;
+    }
+    if is_attacked_by_cannon(board, sq, attacker_player) {
+        return true;
+    }
+    false
+}
 
-    // Attacked by Pawns (using reverse lookup)
+fn is_attacked_by_pawn(board: &crate::bitboard::Board, sq: usize, attacker_player: crate::constants::Player) -> bool {
     let pawn_type = if attacker_player == crate::constants::Player::Red { crate::constants::Piece::RPawn } else { crate::constants::Piece::BPawn };
-    if (ATTACK_TABLES.pawn[defender_idx][sq] & board.piece_bitboards[pawn_type.get_bb_index().unwrap()]) != 0 {
-        return true;
-    }
+    let defender_idx = if attacker_player == crate::constants::Player::Red { 1 } else { 0 };
+    (ATTACK_TABLES.pawn[defender_idx][sq] & board.piece_bitboards[pawn_type.get_bb_index().unwrap()]) != 0
+}
 
-    // Attacked by King
+fn is_attacked_by_king(board: &crate::bitboard::Board, sq: usize, attacker_player: crate::constants::Player) -> bool {
     let king_type = if attacker_player == crate::constants::Player::Red { crate::constants::Piece::RKing } else { crate::constants::Piece::BKing };
-    if (ATTACK_TABLES.king[sq] & board.piece_bitboards[king_type.get_bb_index().unwrap()]) != 0 {
-        return true;
-    }
+    (ATTACK_TABLES.king[sq] & board.piece_bitboards[king_type.get_bb_index().unwrap()]) != 0
+}
 
-    // Attacked by Horse
+fn is_attacked_by_horse(board: &crate::bitboard::Board, sq: usize, attacker_player: crate::constants::Player) -> bool {
     let horse_type = if attacker_player == crate::constants::Player::Red { crate::constants::Piece::RHorse } else { crate::constants::Piece::BHorse };
     let mut potential_horses = ATTACK_TABLES.horse[sq] & board.piece_bitboards[horse_type.get_bb_index().unwrap()];
     while potential_horses != 0 {
         let from_sq = potential_horses.trailing_zeros() as usize;
         let leg_sq = ATTACK_TABLES.horse_legs[from_sq][sq];
-        if (occupied & SQUARE_MASKS[leg_sq]) == 0 {
+        if (board.occupied_bitboard() & SQUARE_MASKS[leg_sq]) == 0 {
             return true;
         }
         potential_horses &= !SQUARE_MASKS[from_sq];
     }
+    false
+}
 
-    // Attacked by Bishop
+fn is_attacked_by_bishop(board: &crate::bitboard::Board, sq: usize, attacker_player: crate::constants::Player) -> bool {
     let bishop_type = if attacker_player == crate::constants::Player::Red { crate::constants::Piece::RBishop } else { crate::constants::Piece::BBishop };
     let mut potential_bishops = ATTACK_TABLES.bishop[sq] & board.piece_bitboards[bishop_type.get_bb_index().unwrap()];
     if potential_bishops != 0 {
@@ -278,27 +255,24 @@ pub fn is_square_attacked_by(board: &crate::bitboard::Board, sq: usize, attacker
             while potential_bishops != 0 {
                 let from_sq = potential_bishops.trailing_zeros() as usize;
                 let leg_sq = ATTACK_TABLES.bishop_legs[from_sq][sq];
-                if (occupied & SQUARE_MASKS[leg_sq]) == 0 {
+                if (board.occupied_bitboard() & SQUARE_MASKS[leg_sq]) == 0 {
                     return true;
                 }
                 potential_bishops &= !SQUARE_MASKS[from_sq];
             }
         }
     }
-
-    // Attacked by Rook
-    let rook_type = if attacker_player == crate::constants::Player::Red { crate::constants::Piece::RRook } else { crate::constants::Piece::BRook };
-    if (get_rook_moves_bb(sq, occupied) & board.piece_bitboards[rook_type.get_bb_index().unwrap()]) != 0 {
-        return true;
-    }
-
-    // Attacked by Cannon
-    let cannon_type = if attacker_player == crate::constants::Player::Red { crate::constants::Piece::RCannon } else { crate::constants::Piece::BCannon };
-    if (get_cannon_moves_bb(sq, occupied) & board.piece_bitboards[cannon_type.get_bb_index().unwrap()]) != 0 {
-        return true;
-    }
-
     false
+}
+
+fn is_attacked_by_rook(board: &crate::bitboard::Board, sq: usize, attacker_player: crate::constants::Player) -> bool {
+    let rook_type = if attacker_player == crate::constants::Player::Red { crate::constants::Piece::RRook } else { crate::constants::Piece::BRook };
+    (get_rook_moves_bb(sq, board.occupied_bitboard()) & board.piece_bitboards[rook_type.get_bb_index().unwrap()]) != 0
+}
+
+fn is_attacked_by_cannon(board: &crate::bitboard::Board, sq: usize, attacker_player: crate::constants::Player) -> bool {
+    let cannon_type = if attacker_player == crate::constants::Player::Red { crate::constants::Piece::RCannon } else { crate::constants::Piece::BCannon };
+    (get_cannon_moves_bb(sq, board.occupied_bitboard()) & board.piece_bitboards[cannon_type.get_bb_index().unwrap()]) != 0
 }
 
 pub fn is_king_in_check(board: &crate::bitboard::Board, player: crate::constants::Player) -> bool {
@@ -307,7 +281,7 @@ pub fn is_king_in_check(board: &crate::bitboard::Board, player: crate::constants
     if king_bb == 0 { return true; } // Should not happen
     let king_sq = king_bb.trailing_zeros() as usize;
 
-    // 1. Check if attacked by opponent's pieces
+    // 1. Check if attacked by opponent's pieces using the general attack checker
     if is_square_attacked_by(board, king_sq, player.opponent()) {
         return true;
     }

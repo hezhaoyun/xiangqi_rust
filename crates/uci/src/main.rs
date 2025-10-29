@@ -31,7 +31,7 @@ fn parse_uci_move(board: &Board, move_str: &str) -> Option<Move> {
 }
 
 pub fn parse_go_command(parts: &[&str], board: &Board) -> (i32, Option<u128>) {
-    let mut depth = 10; // Default depth
+    let mut depth = 64; // Default depth
     let mut time_limit_ms = None;
 
     if parts.contains(&"infinite") {
@@ -154,12 +154,13 @@ fn main() {
                 "go" => {
                     if let Some(ref mut b) = board {
                         let (depth, time_limit_ms) = parse_go_command(&parts, b);
-                        writeln!(log_file, "depth: {}, time_limit_ms: {:?}", depth, time_limit_ms).unwrap();
+                        // writeln!(log_file, "depth: {}, time_limit_ms: {:?}", depth, time_limit_ms).unwrap();
+
                         let mut engine_lock = engine.lock().unwrap();
                         engine_lock.stop_search = false;
-                        let (best_move, _) = engine_lock.search(b, depth, time_limit_ms);
 
-                        println!("bestmove {}", best_move.to_uci_string());
+                        let (best_move, _) = engine_lock.search(b, depth, time_limit_ms);
+                        writeln!(log_file, "bestmove {}", best_move.to_uci_string()).unwrap();
                     }
                 }
                 "stop" => {

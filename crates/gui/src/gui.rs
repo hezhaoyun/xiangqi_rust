@@ -39,7 +39,7 @@ const BOARD_HEIGHT: f32 = SQUARE_SIZE * 10.0;
 
 // Game and UCI constants
 const INITIAL_FEN: &str = "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1";
-const UCI_ENGINE_PATH: &str = "./target/release/uci";
+const UCI_ENGINE_PATH: &str = "./target/debug/uci";
 const UCI_CMD_UCI: &str = "uci";
 const UCI_CMD_ISREADY: &str = "isready";
 const UCI_CMD_POSITION_FEN: &str = "position fen";
