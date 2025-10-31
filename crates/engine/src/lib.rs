@@ -4,6 +4,7 @@ pub mod constants;
 pub mod engine;
 pub mod evaluate;
 pub mod move_gen;
+pub mod movelist;
 pub mod r#move;
 pub mod opening_book;
 pub mod tt;

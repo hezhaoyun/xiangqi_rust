@@ -166,7 +166,7 @@ fn main() {
                             log_file,
                             "bestmove {}, bestscore: {}, searched_depth: {}",
                             best_move.to_uci_string(),
-                            best_score,
+                            -best_score,
                             searched_depth
                         )
                         .unwrap();
@@ -174,7 +174,7 @@ fn main() {
                         println!(
                             "bestmove {}, bestscore: {}",
                             best_move.to_uci_string(),
-                            best_score
+                            -best_score
                         );
                     }
                 }

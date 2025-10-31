@@ -489,15 +489,21 @@ impl XiangqiApp {
 // --- Background Tasks ---
 
 /// Validates a player's move in a background task to avoid blocking the UI thread.
+use engine::movelist::MoveList;
+
+// ... (rest of the file is the same until validate_and_perform_player_move)
+
 async fn validate_and_perform_player_move(
     board: Arc<Mutex<Board>>,
     from_sq: usize,
     to_sq: usize,
 ) -> Result<(Move, Piece, String, Option<String>), ()> {
     let mut board = board.lock().unwrap();
-    let legal_moves = board.generate_legal_moves();
+    let mut legal_moves = MoveList::new();
+    board.generate_legal_moves(&mut legal_moves);
 
     if let Some(&mv) = legal_moves
+        .as_slice()
         .iter()
         .find(|m| m.from_sq() == from_sq && m.to_sq() == to_sq)
     {
@@ -512,7 +518,9 @@ async fn validate_and_perform_player_move(
 
 /// Checks if the current board state is a game-over state (checkmate or stalemate).
 fn check_game_over_state(board: &mut Board) -> Option<String> {
-    if board.generate_legal_moves().is_empty() {
+    let mut legal_moves = MoveList::new();
+    board.generate_legal_moves(&mut legal_moves);
+    if legal_moves.is_empty() {
         if engine::move_gen::is_king_in_check(board, board.player_to_move) {
             Some(format!(
                 "{:?} wins by checkmate!",

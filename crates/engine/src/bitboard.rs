@@ -3,6 +3,7 @@
 use crate::constants::{Piece, Player};
 use crate::zobrist;
 use std::fmt;
+use crate::movelist::MoveList;
 
 // C's __int128_t is u128 in Rust.
 pub type Bitboard = u128;
@@ -298,17 +299,16 @@ impl Board {
     }
 
     /// Generates all pseudo-legal capture moves for the current player.
-    pub fn generate_capture_moves(&self) -> Vec<crate::r#move::Move> {
-        self.generate_moves(MoveGenType::Captures)
+    pub fn generate_capture_moves(&self, moves: &mut MoveList) {
+        self.generate_moves(moves, MoveGenType::Captures)
     }
 
     /// Generates all pseudo-legal quiet (non-capture) moves for the current player.
-    pub fn generate_quiet_moves(&self) -> Vec<crate::r#move::Move> {
-        self.generate_moves(MoveGenType::Quiets)
+    pub fn generate_quiet_moves(&self, moves: &mut MoveList) {
+        self.generate_moves(moves, MoveGenType::Quiets)
     }
 
-    fn generate_moves(&self, move_gen_type: MoveGenType) -> Vec<crate::r#move::Move> {
-        let mut moves = Vec::with_capacity(64);
+    fn generate_moves(&self, moves: &mut MoveList, move_gen_type: MoveGenType) {
         let player_idx = self.player_to_move.get_bb_idx();
         let own_pieces_bb = self.color_bitboards[player_idx];
         let opponent_pieces_bb = self.color_bitboards[1 - player_idx];
@@ -333,21 +333,20 @@ impl Board {
 
                 match move_gen_type {
                     MoveGenType::All => {
-                        self.add_moves(&mut moves, from_sq, moves_bb & opponent_pieces_bb, true);
-                        self.add_moves(&mut moves, from_sq, moves_bb & !occupied, false);
+                        self.add_moves(moves, from_sq, moves_bb & opponent_pieces_bb, true);
+                        self.add_moves(moves, from_sq, moves_bb & !occupied, false);
                     }
                     MoveGenType::Captures => {
-                        self.add_moves(&mut moves, from_sq, moves_bb & opponent_pieces_bb, true);
+                        self.add_moves(moves, from_sq, moves_bb & opponent_pieces_bb, true);
                     }
                     MoveGenType::Quiets => {
-                        self.add_moves(&mut moves, from_sq, moves_bb & !occupied, false);
+                        self.add_moves(moves, from_sq, moves_bb & !occupied, false);
                     }
                 }
 
                 piece_bb &= !SQUARE_MASKS[from_sq];
             }
         }
-        moves
     }
 
     fn get_piece_moves(&self, piece_type: Piece, from_sq: usize, occupied: Bitboard, player_idx: usize) -> Bitboard {
@@ -398,10 +397,10 @@ impl Board {
         }
     }
 
-    fn add_moves(&self, moves: &mut Vec<crate::r#move::Move>, from_sq: usize, mut moves_bb: Bitboard, is_capture: bool) {
+    fn add_moves(&self, moves: &mut MoveList, from_sq: usize, mut moves_bb: Bitboard, is_capture: bool) {
         while moves_bb != 0 {
             let to_sq = moves_bb.trailing_zeros() as usize;
-            moves.push(crate::r#move::Move::new(
+            moves.add(crate::r#move::Move::new(
                 from_sq,
                 to_sq,
                 if is_capture { Some(self.board[to_sq]) } else { None },
@@ -410,21 +409,19 @@ impl Board {
         }
     }
 
-    pub fn generate_legal_moves(&mut self) -> Vec<crate::r#move::Move> {
-        let mut legal_moves = Vec::with_capacity(128);
-        let player = self.player_to_move;
+    pub fn generate_legal_moves(&mut self, moves: &mut MoveList) {
+        let mut pseudo_legal_moves = MoveList::new();
+        self.generate_capture_moves(&mut pseudo_legal_moves);
+        self.generate_quiet_moves(&mut pseudo_legal_moves);
 
-        let mut pseudo_legal_moves = self.generate_capture_moves();
-        pseudo_legal_moves.extend(self.generate_quiet_moves());
-
-        for &mv in &pseudo_legal_moves {
+        for i in 0..pseudo_legal_moves.len() {
+            let mv = pseudo_legal_moves[i];
             let captured = self.move_piece(mv);
-            if !crate::move_gen::is_king_in_check(self, player) {
-                legal_moves.push(mv);
+            if !crate::move_gen::is_king_in_check(self, self.player_to_move.opponent()) {
+                moves.add(mv);
             }
             self.unmove_piece(mv, captured);
         }
-        legal_moves
     }
 }
 

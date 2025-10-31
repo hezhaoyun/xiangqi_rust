@@ -1,9 +1,10 @@
 //! The main search engine.
 
+use crate::r#move::Move;
 use crate::bitboard::{self, Board};
 use crate::constants::{MATE_VALUE, Piece, Player};
 use crate::evaluate;
-use crate::r#move::Move;
+use crate::movelist::MoveList;
 use crate::move_gen;
 use crate::opening_book;
 use crate::tt::{TranspositionTable, TtFlag};
@@ -208,11 +209,13 @@ impl Engine {
         let mut best_score = -MATE_VALUE;
         let mut best_move = Move::new(0, 0, None);
 
-        let mut moves = board.generate_capture_moves();
-        moves.extend(board.generate_quiet_moves());
+        let mut moves = MoveList::new();
+        board.generate_capture_moves(&mut moves);
+        board.generate_quiet_moves(&mut moves);
 
         let mut scored_moves: Vec<ScoredMove> = moves
-            .iter_mut()
+            .as_slice()
+            .iter()
             .map(|mv| ScoredMove {
                 mv: *mv,
                 score: self.score_move(board, *mv, tt_best_move, ply),
@@ -220,303 +223,307 @@ impl Engine {
             .collect();
         scored_moves.sort_by(|a, b| b.score.cmp(&a.score));
 
-        for sm in scored_moves {
-            let captured = board.move_piece(sm.mv);
-            if move_gen::is_king_in_check(board, board.player_to_move.opponent()) {
-                board.unmove_piece(sm.mv, captured);
-                continue;
-            }
-            legal_moves_found += 1;
+            for sm in scored_moves {
+                let captured = board.move_piece(sm.mv);
+                if move_gen::is_king_in_check(board, board.player_to_move.opponent()) {
+                    board.unmove_piece(sm.mv, captured);
+                    continue;
+                }
+                legal_moves_found += 1;
 
-            let mut score;
-            if legal_moves_found == 1 {
-                // Full window search for the first move
-                score = -self
-                    .negamax(board, current_depth - 1, -beta, -alpha, ply + 1)
-                    .1;
-            } else {
-                // --- Late Move Reduction (LMR) ---
-                let reduction = if current_depth >= 3
-                    && legal_moves_found > 3
-                    && !is_in_check
-                    && !sm.mv.is_capture()
-                {
-                    1
-                } else {
-                    0
-                };
-
-                score = -self
-                    .negamax(
-                        board,
-                        current_depth - 1 - reduction,
-                        -alpha - 1,
-                        -alpha,
-                        ply + 1,
-                    )
-                    .1;
-
-                // Re-search if LMR was too aggressive
-                if score > alpha && reduction > 0 {
+                let mut score;
+                if legal_moves_found == 1 {
+                    // Full window search for the first move
                     score = -self
                         .negamax(board, current_depth - 1, -beta, -alpha, ply + 1)
                         .1;
-                }
-            }
-
-            board.unmove_piece(sm.mv, captured);
-
-            if score > best_score {
-                best_score = score;
-                best_move = sm.mv;
-            }
-            if best_score > alpha {
-                alpha = best_score;
-            }
-            if alpha >= beta {
-                if !sm.mv.is_capture() {
-                    self.store_killer_move(sm.mv, ply);
-                    let moving_piece = board.board[sm.mv.from_sq()];
-                    if let Some(idx) = moving_piece.get_bb_index() {
-                        self.history_table[idx][sm.mv.to_sq()] += depth * depth;
-                    }
-                }
-                break; // Beta cutoff
-            }
-        }
-
-        if legal_moves_found == 0 {
-            return (
-                Move::new(0, 0, None),
-                if is_in_check {
-                    -MATE_VALUE + ply as i32
                 } else {
-                    0
-                },
-            );
-        }
+                    // --- Late Move Reduction (LMR) ---
+                    let reduction = if current_depth >= 3
+                        && legal_moves_found > 3
+                        && !is_in_check
+                        && !sm.mv.is_capture()
+                    {
+                        1
+                    } else {
+                        0
+                    };
 
-        self.store_in_tt_table(
-            board.hash_key,
-            depth,
-            best_score,
-            original_alpha,
-            beta,
-            best_move,
-        );
+                    score = -self
+                        .negamax(
+                            board,
+                            current_depth - 1 - reduction,
+                            -alpha - 1,
+                            -alpha,
+                            ply + 1,
+                        )
+                        .1;
 
-        (best_move, best_score)
-    }
+                    // Re-search if LMR was too aggressive
+                    if score > alpha && reduction > 0 {
+                        score = -self
+                            .negamax(board, current_depth - 1, -beta, -alpha, ply + 1)
+                            .1;
+                    }
+                }
 
-    /// Checks if the time limit for the search has been exceeded.
-    fn check_time_limit(&mut self) -> bool {
-        if self.nodes_searched % 2048 == 0 {
-            if let Some(limit) = self.time_limit_ms {
-                if self.start_time.elapsed().as_millis() >= limit {
-                    self.stop_search = true;
+                board.unmove_piece(sm.mv, captured);
+
+                if score > best_score {
+                    best_score = score;
+                    best_move = sm.mv;
+                }
+                if best_score > alpha {
+                    alpha = best_score;
+                }
+                if alpha >= beta {
+                    if !sm.mv.is_capture() {
+                        self.store_killer_move(sm.mv, ply);
+                        let moving_piece = board.board[sm.mv.from_sq()];
+                        if let Some(idx) = moving_piece.get_bb_index() {
+                            self.history_table[idx][sm.mv.to_sq()] += depth * depth;
+                        }
+                    }
+                    break; // Beta cutoff
                 }
             }
-        }
-        self.stop_search
-    }
 
-    /// Detects if the current position is a draw by repetition.
-    fn handle_repetition(&self, board: &Board) -> Option<i32> {
-        if board.history_ply >= 4 {
-            let mut repetitions = 0;
-            for i in (0..board.history_ply - 1).rev().step_by(2) {
-                if board.history[i] == board.hash_key {
-                    repetitions += 1;
-                    if repetitions >= 2 {
-                        return Some(0); // Draw
+            if legal_moves_found == 0 {
+                return (
+                    Move::new(0, 0, None),
+                    if is_in_check {
+                        -MATE_VALUE + ply as i32
+                    } else {
+                        0
+                    },
+                );
+            }
+
+            self.store_in_tt_table(
+                board.hash_key,
+                depth,
+                best_score,
+                original_alpha,
+                beta,
+                best_move,
+            );
+
+            (best_move, best_score)
+        }
+
+        /// Checks if the time limit for the search has been exceeded.
+        fn check_time_limit(&mut self) -> bool {
+            if self.nodes_searched % 2048 == 0 {
+                if let Some(limit) = self.time_limit_ms {
+                    if self.start_time.elapsed().as_millis() >= limit {
+                        self.stop_search = true;
                     }
                 }
             }
+            self.stop_search
         }
-        None
-    }
 
-    /// Probes the transposition table for the current position.
-    fn probe_tt_table(
-        &mut self,
-        hash_key: u64,
-        depth: i32,
-        alpha: &mut i32,
-        beta: &mut i32,
-        tt_best_move: &mut Move,
-    ) -> Option<(Move, i32)> {
-        if let Some(tt_entry) = self.tt.probe(hash_key) {
-            *tt_best_move = tt_entry.best_move;
-            if tt_entry.depth >= depth {
-                let score = tt_entry.score;
-                match tt_entry.flag {
-                    TtFlag::Exact => return Some((tt_entry.best_move, score)),
-                    TtFlag::LowerBound => *alpha = (*alpha).max(score),
-                    TtFlag::UpperBound => *beta = (*beta).min(score),
-                }
-                if *alpha >= *beta {
-                    return Some((tt_entry.best_move, score));
+        /// Detects if the current position is a draw by repetition.
+        fn handle_repetition(&self, board: &Board) -> Option<i32> {
+            if board.history_ply >= 4 {
+                let mut repetitions = 0;
+                for i in (0..board.history_ply - 1).rev().step_by(2) {
+                    if board.history[i] == board.hash_key {
+                        repetitions += 1;
+                        if repetitions >= 2 {
+                            return Some(0); // Draw
+                        }
+                    }
                 }
             }
+            None
         }
-        None
-    }
 
-    /// Performs null move pruning.
-    fn perform_null_move_pruning(
-        &mut self,
-        board: &mut Board,
-        depth: i32,
-        beta: i32,
-        is_in_check: bool,
-        ply: usize,
-    ) -> Option<(Move, i32)> {
-        if !is_in_check && depth >= 3 && self.get_major_piece_count(board, board.player_to_move) > 1
-        {
-            let r = if depth > 6 { 3 } else { 2 };
-            board.player_to_move = board.player_to_move.opponent();
-            board.hash_key ^= crate::zobrist::ZOBRIST_PLAYER;
-            board.history_ply += 1;
-            board.history[board.history_ply] = board.hash_key;
-
-            let (_, null_move_score) =
-                self.negamax(board, depth - 1 - r, -beta, -beta + 1, ply + 1);
-            let score = -null_move_score;
-
-            board.history_ply -= 1;
-            board.hash_key ^= crate::zobrist::ZOBRIST_PLAYER;
-            board.player_to_move = board.player_to_move.opponent();
-
-            if score >= beta {
-                return Some((Move::new(0, 0, None), beta));
+        /// Probes the transposition table for the current position.
+        fn probe_tt_table(
+            &mut self,
+            hash_key: u64,
+            depth: i32,
+            alpha: &mut i32,
+            beta: &mut i32,
+            tt_best_move: &mut Move,
+        ) -> Option<(Move, i32)> {
+            if let Some(tt_entry) = self.tt.probe(hash_key) {
+                *tt_best_move = tt_entry.best_move;
+                if tt_entry.depth >= depth {
+                    let score = tt_entry.score;
+                    match tt_entry.flag {
+                        TtFlag::Exact => return Some((tt_entry.best_move, score)),
+                        TtFlag::LowerBound => *alpha = (*alpha).max(score),
+                        TtFlag::UpperBound => *beta = (*beta).min(score),
+                    }
+                    if *alpha >= *beta {
+                        return Some((tt_entry.best_move, score));
+                    }
+                }
             }
-        }
-        None
-    }
-
-    fn store_in_tt_table(
-        &mut self,
-        hash_key: u64,
-        depth: i32,
-        best_score: i32,
-        original_alpha: i32,
-        beta: i32,
-        best_move: Move,
-    ) {
-        let flag = if best_score >= beta {
-            TtFlag::LowerBound
-        } else if best_score > original_alpha {
-            TtFlag::Exact
-        } else {
-            TtFlag::UpperBound
-        };
-        self.tt.store(hash_key, depth, best_score, flag, best_move);
-    }
-
-    fn store_killer_move(&mut self, mv: Move, ply: usize) {
-        if ply < MAX_PLY {
-            self.killer_moves[ply][1] = self.killer_moves[ply][0];
-            self.killer_moves[ply][0] = mv;
-        }
-    }
-
-    /// Helper to score a move for move ordering.
-    fn score_move(&self, board: &Board, mv: Move, tt_best_move: Move, ply: usize) -> i32 {
-        const TT_BEST_MOVE_SCORE: i32 = 1_000_000;
-        const KILLER_MOVE_SCORE: i32 = 500_000;
-        const CAPTURE_BONUS: i32 = 800_000;
-
-        if mv.from_sq() == tt_best_move.from_sq() && mv.to_sq() == tt_best_move.to_sq() {
-            return TT_BEST_MOVE_SCORE;
+            None
         }
 
-        // MVV-LVA (Most Valuable Victim - Least Valuable Aggressor)
-        let captured_piece = board.board[mv.to_sq()];
-        if captured_piece != Piece::Empty {
-            let moving_piece = board.board[mv.from_sq()];
-            return CAPTURE_BONUS + captured_piece.value() - moving_piece.value();
-        }
+        /// Performs null move pruning.
+        fn perform_null_move_pruning(
+            &mut self,
+            board: &mut Board,
+            depth: i32,
+            beta: i32,
+            is_in_check: bool,
+            ply: usize,
+        ) -> Option<(Move, i32)> {
+            if !is_in_check && depth >= 3 && self.get_major_piece_count(board, board.player_to_move) > 1
+            {
+                let r = if depth > 6 { 3 } else { 2 };
+                board.player_to_move = board.player_to_move.opponent();
+                board.hash_key ^= crate::zobrist::ZOBRIST_PLAYER;
+                board.history_ply += 1;
+                board.history[board.history_ply] = board.hash_key;
 
-        // Killer moves
-        if ply < MAX_PLY {
-            if self.killer_moves[ply][0] == mv {
-                return KILLER_MOVE_SCORE;
-            }
-            if self.killer_moves[ply][1] == mv {
-                return KILLER_MOVE_SCORE - 10;
-            }
-        }
+                let (_, null_move_score) =
+                    self.negamax(board, depth - 1 - r, -beta, -beta + 1, ply + 1);
+                let score = -null_move_score;
 
-        // History heuristic
-        let moving_piece = board.board[mv.from_sq()];
-        if let Some(idx) = moving_piece.get_bb_index() {
-            return self.history_table[idx][mv.to_sq()];
-        }
-        0 // Default if piece not found (should not happen)
-    }
-
-    /// Quiescence search to evaluate noisy positions.
-    fn quiescence_search(
-        &mut self,
-        board: &mut Board,
-        mut alpha: i32,
-        beta: i32,
-        ply: usize,
-    ) -> i32 {
-        const Q_SEARCH_DEPTH: i32 = 8;
-        if ply >= MAX_PLY || (ply as i32) > Q_SEARCH_DEPTH {
-            return evaluate::evaluate(board, &self.config);
-        }
-
-        if self.check_time_limit() {
-            return 0;
-        }
-        self.nodes_searched += 1;
-
-        let stand_pat = evaluate::evaluate(board, &self.config);
-        if stand_pat >= beta {
-            return beta;
-        }
-        if stand_pat > alpha {
-            alpha = stand_pat;
-        }
-
-        let mut moves = board.generate_capture_moves();
-        // Also consider non-capture checks in quiescence search
-        let quiet_moves = board.generate_quiet_moves();
-        for &mv in &quiet_moves {
-            let captured = board.move_piece(mv);
-            if move_gen::is_king_in_check(board, board.player_to_move) {
-                moves.push(mv);
-            }
-            board.unmove_piece(mv, captured);
-        }
-
-        let mut scored_moves: Vec<ScoredMove> = moves
-            .into_iter()
-            .map(|mv| ScoredMove {
-                mv,
-                score: self.score_move(board, mv, Move::new(0, 0, None), ply),
-            })
-            .collect();
-        scored_moves.sort_by(|a, b| b.score.cmp(&a.score));
-
-        for sm in scored_moves {
-            let captured = board.move_piece(sm.mv);
-            if !move_gen::is_king_in_check(board, board.player_to_move.opponent()) {
-                let score = -self.quiescence_search(board, -beta, -alpha, ply + 1);
-                board.unmove_piece(sm.mv, captured);
+                board.history_ply -= 1;
+                board.hash_key ^= crate::zobrist::ZOBRIST_PLAYER;
+                board.player_to_move = board.player_to_move.opponent();
 
                 if score >= beta {
-                    return beta;
+                    return Some((Move::new(0, 0, None), beta));
                 }
-                if score > alpha {
-                    alpha = score;
-                }
+            }
+            None
+        }
+
+        fn store_in_tt_table(
+            &mut self,
+            hash_key: u64,
+            depth: i32,
+            best_score: i32,
+            original_alpha: i32,
+            beta: i32,
+            best_move: Move,
+        ) {
+            let flag = if best_score >= beta {
+                TtFlag::LowerBound
+            } else if best_score > original_alpha {
+                TtFlag::Exact
             } else {
-                board.unmove_piece(sm.mv, captured);
+                TtFlag::UpperBound
+            };
+            self.tt.store(hash_key, depth, best_score, flag, best_move);
+        }
+
+        fn store_killer_move(&mut self, mv: Move, ply: usize) {
+            if ply < MAX_PLY {
+                self.killer_moves[ply][1] = self.killer_moves[ply][0];
+                self.killer_moves[ply][0] = mv;
             }
         }
-        alpha
+
+        /// Helper to score a move for move ordering.
+        fn score_move(&self, board: &Board, mv: Move, tt_best_move: Move, ply: usize) -> i32 {
+            const TT_BEST_MOVE_SCORE: i32 = 1_000_000;
+            const KILLER_MOVE_SCORE: i32 = 500_000;
+            const CAPTURE_BONUS: i32 = 800_000;
+
+            if mv.from_sq() == tt_best_move.from_sq() && mv.to_sq() == tt_best_move.to_sq() {
+                return TT_BEST_MOVE_SCORE;
+            }
+
+            // MVV-LVA (Most Valuable Victim - Least Valuable Aggressor)
+            let captured_piece = board.board[mv.to_sq()];
+            if captured_piece != Piece::Empty {
+                let moving_piece = board.board[mv.from_sq()];
+                return CAPTURE_BONUS + captured_piece.value() - moving_piece.value();
+            }
+
+            // Killer moves
+            if ply < MAX_PLY {
+                if self.killer_moves[ply][0] == mv {
+                    return KILLER_MOVE_SCORE;
+                }
+                if self.killer_moves[ply][1] == mv {
+                    return KILLER_MOVE_SCORE - 10;
+                }
+            }
+
+            // History heuristic
+            let moving_piece = board.board[mv.from_sq()];
+            if let Some(idx) = moving_piece.get_bb_index() {
+                return self.history_table[idx][mv.to_sq()];
+            }
+            0 // Default if piece not found (should not happen)
+        }
+
+        /// Quiescence search to evaluate noisy positions.
+        fn quiescence_search(
+            &mut self,
+            board: &mut Board,
+            mut alpha: i32,
+            beta: i32,
+            ply: usize,
+        ) -> i32 {
+            const Q_SEARCH_DEPTH: i32 = 8;
+            if ply >= MAX_PLY || (ply as i32) > Q_SEARCH_DEPTH {
+                return evaluate::evaluate(board, &self.config);
+            }
+
+            if self.check_time_limit() {
+                return 0;
+            }
+            self.nodes_searched += 1;
+
+            let stand_pat = evaluate::evaluate(board, &self.config);
+            if stand_pat >= beta {
+                return beta;
+            }
+            if stand_pat > alpha {
+                alpha = stand_pat;
+            }
+
+            let mut moves = MoveList::new();
+            board.generate_capture_moves(&mut moves);
+            
+            let mut quiet_moves = MoveList::new();
+            board.generate_quiet_moves(&mut quiet_moves);
+            for i in 0..quiet_moves.len() {
+                let mv = quiet_moves[i];
+                let captured = board.move_piece(mv);
+                if move_gen::is_king_in_check(board, board.player_to_move) {
+                    moves.add(mv);
+                }
+                board.unmove_piece(mv, captured);
+            }
+
+            let mut scored_moves: Vec<ScoredMove> = moves
+                .as_slice()
+                .iter()
+                .map(|mv| ScoredMove {
+                    mv: *mv,
+                    score: self.score_move(board, *mv, Move::new(0, 0, None), ply),
+                })
+                .collect();
+            scored_moves.sort_by(|a, b| b.score.cmp(&a.score));
+
+            for sm in scored_moves {
+                let captured = board.move_piece(sm.mv);
+                if !move_gen::is_king_in_check(board, board.player_to_move.opponent()) {
+                    let score = -self.quiescence_search(board, -beta, -alpha, ply + 1);
+                    board.unmove_piece(sm.mv, captured);
+
+                    if score >= beta {
+                        return beta;
+                    }
+                    if score > alpha {
+                        alpha = score;
+                    }
+                } else {
+                    board.unmove_piece(sm.mv, captured);
+                }
+            }
+            alpha
+        }
     }
-}
