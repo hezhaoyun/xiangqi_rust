@@ -60,8 +60,12 @@ impl TranspositionTable {
     /// Stores an entry in the transposition table.
     pub fn store(&mut self, hash_key: u64, depth: i32, score: i32, flag: TtFlag, best_move: Move) {
         let index = hash_key as usize % self.entries.len();
-        // Always-replace scheme
-        self.entries[index] = TtEntry { hash_key, depth, score, flag, best_move };
+        let entry = &self.entries[index];
+
+        // Depth-preferred replacement strategy
+        if depth >= entry.depth {
+            self.entries[index] = TtEntry { hash_key, depth, score, flag, best_move };
+        }
     }
 
     pub fn clear(&mut self) {

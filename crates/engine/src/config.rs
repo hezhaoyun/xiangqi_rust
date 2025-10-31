@@ -9,6 +9,8 @@ pub struct Config {
     pub mobility_bonus_rook: i32,
     pub mobility_bonus_horse: i32,
     pub mobility_bonus_cannon: i32,
+    pub bonus_rook_on_open_file: i32,
+    pub bonus_rook_on_semi_open_file: i32,
 
     // Search constants
     pub lmr_reduction: i32,
@@ -24,6 +26,8 @@ impl Default for Config {
             mobility_bonus_rook: 1,
             mobility_bonus_horse: 3,
             mobility_bonus_cannon: 1,
+            bonus_rook_on_open_file: 20,
+            bonus_rook_on_semi_open_file: 10,
             lmr_reduction: 1,
         }
     }

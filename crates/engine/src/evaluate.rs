@@ -133,9 +133,49 @@ pub fn evaluate(board: &Board, config: &Config) -> i32 {
     let pattern_score = calculate_pattern_score(board, config);
     let king_safety_score = calculate_king_safety_score(board, config);
     let dynamic_bonus_score = calculate_dynamic_bonus_score(board, config);
+    let rook_placement_score = calculate_rook_placement_score(board, config);
 
-    let final_score = material_score + pst_score + mobility_score + pattern_score + king_safety_score + dynamic_bonus_score;
+    let final_score = material_score + pst_score + mobility_score + pattern_score + king_safety_score + dynamic_bonus_score + rook_placement_score;
     if board.player_to_move == Player::Red { final_score } else { -final_score }
+}
+
+/// Calculates a score bonus for rooks on open or semi-open files.
+fn calculate_rook_placement_score(board: &Board, config: &Config) -> i32 {
+    let mut score = 0;
+    let red_pawns_bb = board.piece_bitboards[Piece::RPawn.get_bb_index().unwrap()];
+    let black_pawns_bb = board.piece_bitboards[Piece::BPawn.get_bb_index().unwrap()];
+
+    for c in 0..9 {
+        let file_mask = (0..10).fold(0, |acc, r| acc | bitboard::SQUARE_MASKS[r * 9 + c]);
+        
+        let red_pawns_on_file = (red_pawns_bb & file_mask) != 0;
+        let black_pawns_on_file = (black_pawns_bb & file_mask) != 0;
+
+        // Red Rooks
+        if !red_pawns_on_file {
+            let red_rooks_on_file = (board.piece_bitboards[Piece::RRook.get_bb_index().unwrap()] & file_mask) != 0;
+            if red_rooks_on_file {
+                if !black_pawns_on_file { // Open file
+                    score += config.bonus_rook_on_open_file;
+                } else { // Semi-open file for Red
+                    score += config.bonus_rook_on_semi_open_file;
+                }
+            }
+        }
+
+        // Black Rooks
+        if !black_pawns_on_file {
+            let black_rooks_on_file = (board.piece_bitboards[Piece::BRook.get_bb_index().unwrap()] & file_mask) != 0;
+            if black_rooks_on_file {
+                if !red_pawns_on_file { // Open file
+                    score -= config.bonus_rook_on_open_file;
+                } else { // Semi-open file for Black
+                    score -= config.bonus_rook_on_semi_open_file;
+                }
+            }
+        }
+    }
+    score
 }
 
 /// Calculates a score bonus for specific piece patterns.
