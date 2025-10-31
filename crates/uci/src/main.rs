@@ -159,10 +159,23 @@ fn main() {
                         let mut engine_lock = engine.lock().unwrap();
                         engine_lock.stop_search = false;
 
-                        let (best_move, best_score) = engine_lock.search(b, depth, time_limit_ms);
-                        writeln!(log_file, "bestmove {}, bestscore: {}", best_move.to_uci_string(), best_score).unwrap();
+                        let (best_move, best_score, searched_depth) =
+                            engine_lock.search(b, depth, time_limit_ms);
 
-                        println!("bestmove {}, bestscore: {}", best_move.to_uci_string(), best_score);
+                        writeln!(
+                            log_file,
+                            "bestmove {}, bestscore: {}, searched_depth: {}",
+                            best_move.to_uci_string(),
+                            best_score,
+                            searched_depth
+                        )
+                        .unwrap();
+
+                        println!(
+                            "bestmove {}, bestscore: {}",
+                            best_move.to_uci_string(),
+                            best_score
+                        );
                     }
                 }
                 "stop" => {
