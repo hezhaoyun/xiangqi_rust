@@ -151,7 +151,7 @@ impl Application for XiangqiApp {
         let status_text = match &self.game_state {
             GameState::PlayerTurn => STATUS_PLAYER_TURN,
             GameState::EngineThinking => STATUS_ENGINE_THINKING,
-            GameState::GameOver(ref msg) => msg.as_str(),
+            GameState::GameOver(msg) => msg.as_str(),
         };
 
         let canvas = canvas::Canvas::new(BoardCanvas::new(
