@@ -2,8 +2,8 @@
 
 mod psts;
 
-use crate::move_gen;
-use crate::move_gen::sq_to_idx;
+use crate::move_generator;
+use crate::move_generator::sq_to_idx;
 use crate::bitboard::{self, Board};
 use crate::config::Config;
 use crate::constants::{Piece, Player};
@@ -243,7 +243,7 @@ fn calculate_dynamic_bonus_score(board: &Board, config: &Config) -> i32 {
         // Define black palace zone
         for r in 0..=2 {
             for c in 3..=5 {
-                if move_gen::is_square_attacked_by(board, sq_to_idx(r, c), Player::Red) {
+                if move_generator::is_square_attacked_by(board, sq_to_idx(r, c), Player::Red) {
                     red_attackers += 1;
                 }
             }
@@ -261,7 +261,7 @@ fn calculate_dynamic_bonus_score(board: &Board, config: &Config) -> i32 {
         // Define red palace zone
         for r in 7..=9 {
             for c in 3..=5 {
-                if move_gen::is_square_attacked_by(board, sq_to_idx(r, c), Player::Black) {
+                if move_generator::is_square_attacked_by(board, sq_to_idx(r, c), Player::Black) {
                     black_attackers += 1;
                 }
             }
@@ -291,7 +291,7 @@ fn calculate_mobility_score(board: &Board, config: &Config) -> i32 {
         let mut rooks_bb = board.piece_bitboards[rook_type.get_bb_index().unwrap()];
         while rooks_bb != 0 {
             let sq = rooks_bb.trailing_zeros() as usize;
-            let moves_bb = move_gen::get_rook_moves_bb(sq, occupied) & !own_pieces_bb;
+            let moves_bb = move_generator::get_rook_moves_bb(sq, occupied) & !own_pieces_bb;
             mobility_score +=
                 bitboard::popcount(moves_bb) as i32 * config.mobility_bonus_rook * player_sign;
             rooks_bb &= !bitboard::SQUARE_MASKS[sq];
@@ -306,11 +306,11 @@ fn calculate_mobility_score(board: &Board, config: &Config) -> i32 {
         let mut horses_bb = board.piece_bitboards[horse_type.get_bb_index().unwrap()];
         while horses_bb != 0 {
             let sq = horses_bb.trailing_zeros() as usize;
-            let mut potential_moves = move_gen::ATTACK_TABLES.horse[sq] & !own_pieces_bb;
+            let mut potential_moves = move_generator::ATTACK_TABLES.horse[sq] & !own_pieces_bb;
             let mut count = 0;
             while potential_moves != 0 {
                 let to_sq = potential_moves.trailing_zeros() as usize;
-                let leg_sq = move_gen::ATTACK_TABLES.horse_legs[sq][to_sq];
+                let leg_sq = move_generator::ATTACK_TABLES.horse_legs[sq][to_sq];
                 if (occupied & bitboard::SQUARE_MASKS[leg_sq]) == 0 {
                     count += 1;
                 }
@@ -329,7 +329,7 @@ fn calculate_mobility_score(board: &Board, config: &Config) -> i32 {
         let mut cannons_bb = board.piece_bitboards[cannon_type.get_bb_index().unwrap()];
         while cannons_bb != 0 {
             let sq = cannons_bb.trailing_zeros() as usize;
-            let moves_bb = move_gen::get_cannon_moves_bb(sq, occupied) & !own_pieces_bb;
+            let moves_bb = move_generator::get_cannon_moves_bb(sq, occupied) & !own_pieces_bb;
             mobility_score +=
                 bitboard::popcount(moves_bb) as i32 * config.mobility_bonus_cannon * player_sign;
             cannons_bb &= !bitboard::SQUARE_MASKS[sq];

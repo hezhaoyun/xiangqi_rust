@@ -351,15 +351,15 @@ impl Board {
 
     fn get_piece_moves(&self, piece_type: Piece, from_sq: usize, occupied: Bitboard, player_idx: usize) -> Bitboard {
         match piece_type {
-            Piece::RKing | Piece::BKing => crate::move_gen::ATTACK_TABLES.king[from_sq],
-            Piece::RGuard | Piece::BGuard => crate::move_gen::ATTACK_TABLES.guard[from_sq],
+            Piece::RKing | Piece::BKing => crate::move_generator::ATTACK_TABLES.king[from_sq],
+            Piece::RGuard | Piece::BGuard => crate::move_generator::ATTACK_TABLES.guard[from_sq],
             Piece::RBishop => {
                 let mut moves_bb = 0;
-                let mut potential_moves = crate::move_gen::ATTACK_TABLES.bishop[from_sq];
-                potential_moves &= crate::move_gen::ATTACK_TABLES.red_half_mask;
+                let mut potential_moves = crate::move_generator::ATTACK_TABLES.bishop[from_sq];
+                potential_moves &= crate::move_generator::ATTACK_TABLES.red_half_mask;
                 while potential_moves != 0 {
                     let to_sq = potential_moves.trailing_zeros() as usize;
-                    let leg_sq = crate::move_gen::ATTACK_TABLES.bishop_legs[from_sq][to_sq];
+                    let leg_sq = crate::move_generator::ATTACK_TABLES.bishop_legs[from_sq][to_sq];
                     if (occupied & SQUARE_MASKS[leg_sq]) == 0 { moves_bb |= SQUARE_MASKS[to_sq]; }
                     potential_moves &= !SQUARE_MASKS[to_sq];
                 }
@@ -367,11 +367,11 @@ impl Board {
             }
             Piece::BBishop => {
                 let mut moves_bb = 0;
-                let mut potential_moves = crate::move_gen::ATTACK_TABLES.bishop[from_sq];
-                potential_moves &= crate::move_gen::ATTACK_TABLES.black_half_mask;
+                let mut potential_moves = crate::move_generator::ATTACK_TABLES.bishop[from_sq];
+                potential_moves &= crate::move_generator::ATTACK_TABLES.black_half_mask;
                 while potential_moves != 0 {
                     let to_sq = potential_moves.trailing_zeros() as usize;
-                    let leg_sq = crate::move_gen::ATTACK_TABLES.bishop_legs[from_sq][to_sq];
+                    let leg_sq = crate::move_generator::ATTACK_TABLES.bishop_legs[from_sq][to_sq];
                     if (occupied & SQUARE_MASKS[leg_sq]) == 0 { moves_bb |= SQUARE_MASKS[to_sq]; }
                     potential_moves &= !SQUARE_MASKS[to_sq];
                 }
@@ -379,10 +379,10 @@ impl Board {
             }
             Piece::RHorse | Piece::BHorse => {
                 let mut moves_bb = 0;
-                let mut potential_moves = crate::move_gen::ATTACK_TABLES.horse[from_sq];
+                let mut potential_moves = crate::move_generator::ATTACK_TABLES.horse[from_sq];
                 while potential_moves != 0 {
                     let to_sq = potential_moves.trailing_zeros() as usize;
-                    let leg_sq = crate::move_gen::ATTACK_TABLES.horse_legs[from_sq][to_sq];
+                    let leg_sq = crate::move_generator::ATTACK_TABLES.horse_legs[from_sq][to_sq];
                     if (occupied & SQUARE_MASKS[leg_sq]) == 0 {
                         moves_bb |= SQUARE_MASKS[to_sq];
                     }
@@ -390,9 +390,9 @@ impl Board {
                 }
                 moves_bb
             }
-            Piece::RPawn | Piece::BPawn => crate::move_gen::ATTACK_TABLES.pawn[player_idx][from_sq],
-            Piece::RRook | Piece::BRook => crate::move_gen::get_rook_moves_bb(from_sq, occupied),
-            Piece::RCannon | Piece::BCannon => crate::move_gen::get_cannon_moves_bb(from_sq, occupied),
+            Piece::RPawn | Piece::BPawn => crate::move_generator::ATTACK_TABLES.pawn[player_idx][from_sq],
+            Piece::RRook | Piece::BRook => crate::move_generator::get_rook_moves_bb(from_sq, occupied),
+            Piece::RCannon | Piece::BCannon => crate::move_generator::get_cannon_moves_bb(from_sq, occupied),
             _ => 0,
         }
     }
@@ -417,7 +417,7 @@ impl Board {
         for i in 0..pseudo_legal_moves.len() {
             let mv = pseudo_legal_moves[i];
             let captured = self.move_piece(mv);
-            if !crate::move_gen::is_king_in_check(self, self.player_to_move.opponent()) {
+            if !crate::move_generator::is_king_in_check(self, self.player_to_move.opponent()) {
                 moves.add(mv);
             }
             self.unmove_piece(mv, captured);

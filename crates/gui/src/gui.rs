@@ -57,7 +57,7 @@ const MSG_STALEMATE: &str = "Stalemate!";
 pub fn run() -> iced::Result {
     XiangqiApp::run(Settings {
         window: iced::window::Settings {
-            size: Size::new(700.0, 800.0),
+            size: Size::new(560.0, 780.0),
             ..iced::window::Settings::default()
         },
         ..Settings::default()
@@ -171,9 +171,9 @@ impl Application for XiangqiApp {
             .spacing(10)
             .padding(Padding {
                 top: 0.0,
-                right: 100.0,
+                right: 30.0,
                 bottom: 0.0,
-                left: 100.0,
+                left: 30.0,
             })
             .align_items(iced::Alignment::Center)
             .push(
@@ -521,7 +521,7 @@ fn check_game_over_state(board: &mut Board) -> Option<String> {
     let mut legal_moves = MoveList::new();
     board.generate_legal_moves(&mut legal_moves);
     if legal_moves.is_empty() {
-        if engine::move_gen::is_king_in_check(board, board.player_to_move) {
+        if engine::move_generator::is_king_in_check(board, board.player_to_move) {
             Some(format!(
                 "{:?} wins by checkmate!",
                 board.player_to_move.opponent()

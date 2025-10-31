@@ -5,7 +5,7 @@ use crate::bitboard::{self, Board};
 use crate::constants::{MATE_VALUE, Piece, Player};
 use crate::evaluate;
 use crate::movelist::MoveList;
-use crate::move_gen;
+use crate::move_generator;
 use crate::opening_book;
 use crate::tt::{TranspositionTable, TtFlag};
 use std::time::Instant;
@@ -191,7 +191,7 @@ impl Engine {
             );
         }
 
-        let is_in_check = move_gen::is_king_in_check(board, board.player_to_move);
+        let is_in_check = move_generator::is_king_in_check(board, board.player_to_move);
 
         // Check extension
         let mut current_depth = depth;
@@ -225,7 +225,7 @@ impl Engine {
 
             for sm in scored_moves {
                 let captured = board.move_piece(sm.mv);
-                if move_gen::is_king_in_check(board, board.player_to_move.opponent()) {
+                if move_generator::is_king_in_check(board, board.player_to_move.opponent()) {
                     board.unmove_piece(sm.mv, captured);
                     continue;
                 }
@@ -492,7 +492,7 @@ impl Engine {
             for i in 0..quiet_moves.len() {
                 let mv = quiet_moves[i];
                 let captured = board.move_piece(mv);
-                if move_gen::is_king_in_check(board, board.player_to_move) {
+                if move_generator::is_king_in_check(board, board.player_to_move) {
                     moves.add(mv);
                 }
                 board.unmove_piece(mv, captured);
@@ -510,7 +510,7 @@ impl Engine {
 
             for sm in scored_moves {
                 let captured = board.move_piece(sm.mv);
-                if !move_gen::is_king_in_check(board, board.player_to_move.opponent()) {
+                if !move_generator::is_king_in_check(board, board.player_to_move.opponent()) {
                     let score = -self.quiescence_search(board, -beta, -alpha, ply + 1);
                     board.unmove_piece(sm.mv, captured);
 
