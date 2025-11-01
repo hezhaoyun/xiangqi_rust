@@ -492,8 +492,10 @@ impl Engine {
             for i in 0..quiet_moves.len() {
                 let mv = quiet_moves[i];
                 let captured = board.move_piece(mv);
-                if move_generator::is_king_in_check(board, board.player_to_move) {
-                    moves.add(mv);
+                if !move_generator::is_king_in_check(board, board.player_to_move.opponent()) {
+                    if move_generator::is_king_in_check(board, board.player_to_move) {
+                        moves.add(mv);
+                    }
                 }
                 board.unmove_piece(mv, captured);
             }
