@@ -38,6 +38,21 @@ impl Move {
         (self.0 >> 14) & 1 != 0
     }
 
+    /// Returns a mirrored version of the move.
+    pub fn mirrored(&self) -> Self {
+        let from = self.from_sq();
+        let to = self.to_sq();
+
+        let mirrored_from = (from / 9) * 9 + (8 - (from % 9));
+        let mirrored_to = (to / 9) * 9 + (8 - (to % 9));
+
+        let mut move_val = (mirrored_from as u16) | ((mirrored_to as u16) << 7);
+        if self.is_capture() {
+            move_val |= 1 << 14;
+        }
+        Move(move_val)
+    }
+
     pub fn to_uci_string(&self) -> String {
         let from_sq = self.from_sq();
         let to_sq = self.to_sq();

@@ -52,12 +52,23 @@ fn load_opening_book_from_file(book: &mut HashMap<u64, Vec<Move>>, filename: &st
 pub fn query_opening_book(board: &Board) -> Option<Move> {
     if let Some(moves) = OPENING_BOOK.get(&board.hash_key) {
         if !moves.is_empty() {
-            // Return a random move from the list
             use rand::seq::SliceRandom;
-            use rand::thread_rng;
-            let mut rng = thread_rng();
+            let mut rng = rand::thread_rng();
             return moves.choose(&mut rng).copied();
         }
     }
+
+    // If no move is found, try the mirrored position
+    let mirrored_hash = board.get_mirrored_hash();
+    if let Some(moves) = OPENING_BOOK.get(&mirrored_hash) {
+        if !moves.is_empty() {
+            use rand::seq::SliceRandom;
+            let mut rng = rand::thread_rng();
+            if let Some(mv) = moves.choose(&mut rng) {
+                return Some(mv.mirrored());
+            }
+        }
+    }
+
     None
 }

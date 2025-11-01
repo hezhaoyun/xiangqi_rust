@@ -45,6 +45,7 @@ pub struct Board {
     pub board: [Piece; 90],
     pub player_to_move: Player,
     pub hash_key: u64,
+    pub mirrored_hash_key: u64,
     pub history: [u64; MAX_HISTORY],
     pub history_ply: usize,
     pub material_score: i32, // Score for material balance
@@ -60,6 +61,7 @@ impl Board {
             board: [Piece::Empty; 90],
             player_to_move: Player::Red,
             hash_key: 0,
+            mirrored_hash_key: 0,
             history: [0; MAX_HISTORY],
             history_ply: 0,
             material_score: 0,
@@ -97,6 +99,7 @@ impl Board {
         };
         if board.player_to_move == Player::Black {
             board.hash_key ^= zobrist::ZOBRIST_PLAYER;
+            board.mirrored_hash_key ^= zobrist::ZOBRIST_PLAYER;
         }
 
         // Calculate and store the initial evaluation scores
@@ -153,6 +156,9 @@ impl Board {
         self.piece_bitboards[piece.get_bb_index().unwrap()] |= mask;
         self.color_bitboards[player.get_bb_idx()] |= mask;
         self.hash_key ^= zobrist::ZOBRIST_KEYS[piece.get_zobrist_idx().unwrap()][r][c];
+        let mirrored_c = 8 - c;
+        self.mirrored_hash_key ^=
+            zobrist::ZOBRIST_KEYS[piece.get_zobrist_idx().unwrap()][r][mirrored_c];
     }
 
     pub fn occupied_bitboard(&self) -> Bitboard {
@@ -168,9 +174,9 @@ impl Board {
         self.update_scores_for_move(moving_piece, captured_piece, from_sq, to_sq);
         self.update_board_and_bitboards_for_move(moving_piece, captured_piece, from_sq, to_sq);
         self.update_hash_for_move(moving_piece, captured_piece, from_sq, to_sq);
-
         self.player_to_move = self.player_to_move.opponent();
         self.hash_key ^= zobrist::ZOBRIST_PLAYER;
+        self.mirrored_hash_key ^= zobrist::ZOBRIST_PLAYER;
 
         self.history_ply += 1;
         self.history[self.history_ply] = self.hash_key;
@@ -186,6 +192,7 @@ impl Board {
 
         self.player_to_move = self.player_to_move.opponent();
         self.hash_key ^= zobrist::ZOBRIST_PLAYER;
+        self.mirrored_hash_key ^= zobrist::ZOBRIST_PLAYER;
 
         self.update_scores_for_unmove(moving_piece, captured_piece, from_sq, to_sq);
         self.update_board_and_bitboards_for_unmove(moving_piece, captured_piece, from_sq, to_sq);
@@ -239,9 +246,15 @@ impl Board {
         self.hash_key ^= zobrist::ZOBRIST_KEYS[moving_z_idx][r_from][c_from];
         self.hash_key ^= zobrist::ZOBRIST_KEYS[moving_z_idx][r_to][c_to];
 
+        let mirrored_c_from = 8 - c_from;
+        let mirrored_c_to = 8 - c_to;
+        self.mirrored_hash_key ^= zobrist::ZOBRIST_KEYS[moving_z_idx][r_from][mirrored_c_from];
+        self.mirrored_hash_key ^= zobrist::ZOBRIST_KEYS[moving_z_idx][r_to][mirrored_c_to];
+
         if captured_piece != Piece::Empty {
             let captured_z_idx = captured_piece.get_zobrist_idx().unwrap();
             self.hash_key ^= zobrist::ZOBRIST_KEYS[captured_z_idx][r_to][c_to];
+            self.mirrored_hash_key ^= zobrist::ZOBRIST_KEYS[captured_z_idx][r_to][mirrored_c_to];
         }
     }
 
@@ -292,9 +305,15 @@ impl Board {
         self.hash_key ^= zobrist::ZOBRIST_KEYS[moving_z_idx][r_from][c_from];
         self.hash_key ^= zobrist::ZOBRIST_KEYS[moving_z_idx][r_to][c_to];
 
+        let mirrored_c_from = 8 - c_from;
+        let mirrored_c_to = 8 - c_to;
+        self.mirrored_hash_key ^= zobrist::ZOBRIST_KEYS[moving_z_idx][r_from][mirrored_c_from];
+        self.mirrored_hash_key ^= zobrist::ZOBRIST_KEYS[moving_z_idx][r_to][mirrored_c_to];
+
         if captured_piece != Piece::Empty {
             let captured_z_idx = captured_piece.get_zobrist_idx().unwrap();
             self.hash_key ^= zobrist::ZOBRIST_KEYS[captured_z_idx][r_to][c_to];
+            self.mirrored_hash_key ^= zobrist::ZOBRIST_KEYS[captured_z_idx][r_to][mirrored_c_to];
         }
     }
 
@@ -422,6 +441,10 @@ impl Board {
             }
             self.unmove_piece(mv, captured);
         }
+    }
+
+    pub fn get_mirrored_hash(&self) -> u64 {
+        self.mirrored_hash_key
     }
 }
 

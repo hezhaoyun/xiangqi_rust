@@ -17,7 +17,7 @@ use iced::{
     Settings, Size, Subscription, Theme,
 };
 use std::io::{BufRead, BufReader, Write};
-use std::process::{ChildStdout, ChildStdin, Command as StdCommand, Stdio};
+use std::process::{Child, ChildStdout, ChildStdin, Command as StdCommand, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
@@ -80,6 +80,7 @@ enum Message {
 /// The main application state (the "Model").
 struct XiangqiApp {
     board: Arc<Mutex<Board>>,
+    uci_engine: Child,
     uci_stdin: Arc<Mutex<ChildStdin>>,
     uci_stdout: Arc<Mutex<BufReader<ChildStdout>>>,
 
@@ -89,6 +90,7 @@ struct XiangqiApp {
     move_history: Vec<(Move, Piece)>,
     fen_input: String,
     game_state: GameState,
+    game_id: u64,
     board_cache: canvas::Cache,
 }
 
@@ -110,10 +112,11 @@ impl Application for XiangqiApp {
 
     /// Called once to create the initial application state.
     fn new(_flags: ()) -> (Self, Command<Message>) {
-        let (stdin, stdout) = Self::init_uci_engine();
+        let (child, stdin, stdout) = Self::init_uci_engine();
 
         let app = XiangqiApp {
             board: Arc::new(Mutex::new(Board::from_fen(INITIAL_FEN))),
+            uci_engine: child,
             uci_stdin: Arc::new(Mutex::new(stdin)),
             uci_stdout: Arc::new(Mutex::new(stdout)),
             selected_square: None,
@@ -121,6 +124,7 @@ impl Application for XiangqiApp {
             move_history: Vec::new(),
             fen_input: INITIAL_FEN.to_string(),
             game_state: GameState::PlayerTurn,
+            game_id: 0,
             board_cache: canvas::Cache::new(),
         };
         (app, Command::none())
@@ -143,6 +147,7 @@ impl Application for XiangqiApp {
     fn subscription(&self) -> Subscription<Message> {
         Subscription::from_recipe(UciSubscription {
             uci_stdout: self.uci_stdout.clone(),
+            game_id: self.game_id,
         })
     }
 
@@ -205,6 +210,7 @@ impl Application for XiangqiApp {
 /// A subscription that listens for messages from the UCI engine's stdout.
 struct UciSubscription {
     uci_stdout: Arc<Mutex<BufReader<ChildStdout>>>,
+    game_id: u64,
 }
 
 impl Recipe for UciSubscription {
@@ -214,6 +220,7 @@ impl Recipe for UciSubscription {
         use std::hash::Hash;
         struct UciListener;
         std::any::TypeId::of::<UciListener>().hash(state);
+        self.game_id.hash(state);
     }
 
     fn stream(
@@ -250,7 +257,7 @@ impl Recipe for UciSubscription {
 
 impl XiangqiApp {
     /// Spawns and initializes the UCI engine process.
-    fn init_uci_engine() -> (ChildStdin, BufReader<ChildStdout>) {
+    fn init_uci_engine() -> (Child, ChildStdin, BufReader<ChildStdout>) {
         let mut child = StdCommand::new(UCI_ENGINE_PATH)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -267,7 +274,7 @@ impl XiangqiApp {
         writeln!(&stdin, "{}", UCI_CMD_ISREADY).expect("Failed to write to UCI stdin");
         Self::wait_for_uci_response(&mut stdout, UCI_RESPONSE_READYOK);
 
-        (stdin, stdout)
+        (child, stdin, stdout)
     }
 
     /// Helper to wait for a specific response from the UCI engine.
@@ -414,9 +421,27 @@ impl XiangqiApp {
 
     /// Resets the application to the initial state for a new game.
     fn handle_new_game(&mut self) -> Command<Message> {
-        let (new_app, _cmd) = Self::new(());
-        *self = new_app;
+        // Kill the old engine
+        if let Err(e) = self.uci_engine.kill() {
+            eprintln!("Failed to kill UCI engine: {}", e);
+        }
+
+        // Start a new one
+        let (new_child, new_stdin, new_stdout) = Self::init_uci_engine();
+
+        // Reset the state
+        self.board = Arc::new(Mutex::new(Board::from_fen(INITIAL_FEN)));
+        self.uci_engine = new_child;
+        self.uci_stdin = Arc::new(Mutex::new(new_stdin));
+        self.uci_stdout = Arc::new(Mutex::new(new_stdout));
+        self.selected_square = None;
+        self.last_move = None;
+        self.move_history.clear();
+        self.fen_input = INITIAL_FEN.to_string();
+        self.game_state = GameState::PlayerTurn;
+        self.game_id += 1;
         self.board_cache.clear();
+
         Command::none()
     }
 
